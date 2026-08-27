@@ -1,0 +1,340 @@
+// LodgeHub — Prisma schema (SQLite)
+// Multi-tenant Lodge Management SaaS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Multi-Tenant Foundation ────────────────────────────────────────────────
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  contactEmail  String
+  contactPhone  String?
+  address       String?
+  logoUrl       String?
+  plan          String   @default("starter") // starter | growth | scale | enterprise
+  status        String   @default("active") // active | suspended | cancelled
+  currency      String   @default("INR")
+  timezone      String   @default("Asia/Kolkata")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  properties    Property[]
+  users         User[]
+  roomTypes     RoomType[]
+  rooms         Room[]
+  guests        Guest[]
+  bookings      Booking[]
+  payments      Payment[]
+  invoices      Invoice[]
+  expenses      Expense[]
+  housekeeping  HousekeepingTask[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  subscription  TenantSubscription?
+}
+
+model Property {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  address   String?
+  city      String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rooms    Room[]
+  users    User[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  email     String
+  password  String
+  role      String   @default("receptionist") // super_admin | owner | manager | receptionist | housekeeping | accountant
+  phone     String?
+  avatar    String?
+  active    Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property    Property?  @relation(fields: [propertyId], references: [id])
+  propertyId  String?
+  bookings    Booking[]
+  payments    Payment[]
+  expenses    Expense[]
+  housekeeping HousekeepingTask[]
+  auditLogs   AuditLog[]
+}
+
+// ─── Rooms ──────────────────────────────────────────────────────────────────
+
+model RoomType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  basePrice   Float
+  capacity    Int      @default(2)
+  extraBedPrice Float  @default(0)
+  amenities   String   @default("[]") // JSON array of amenity names
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rooms  Room[]
+}
+
+model Room {
+  id          String   @id @default(cuid())
+  tenantId    String
+  propertyId  String
+  number      String
+  floor       Int      @default(1)
+  roomTypeId  String
+  status      String   @default("available") // available | occupied | reserved | cleaning | maintenance | blocked
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id])
+  bookings Booking[]
+  housekeeping HousekeepingTask[]
+
+  @@unique([tenantId, propertyId, number])
+  @@index([tenantId, status])
+}
+
+// ─── Guests ─────────────────────────────────────────────────────────────────
+
+model Guest {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  mobile       String
+  email        String?
+  address      String?
+  idType       String? // aadhaar | passport | driving_license | pan | voter
+  idNumber     String?
+  company      String?
+  gstNumber    String?
+  notes        String?
+  blacklisted  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+  payments Payment[]
+
+  @@unique([tenantId, mobile])
+  @@index([tenantId])
+}
+
+// ─── Bookings ───────────────────────────────────────────────────────────────
+
+model Booking {
+  id            String   @id @default(cuid())
+  tenantId      String
+  bookingCode   String
+  guestId       String
+  roomId        String
+  source        String   @default("walk_in") // walk_in | online | phone | agent
+  status        String   @default("confirmed") // confirmed | pending | checked_in | checked_out | cancelled | no_show
+  checkIn       DateTime
+  checkOut      DateTime
+  adults        Int      @default(1)
+  children      Int      @default(0)
+  numGuests     Int      @default(1)
+  extraBed      Boolean  @default(false)
+  tariffPerDay  Float
+  totalAmount   Float    @default(0)
+  advancePaid   Float    @default(0)
+  discount      Float    @default(0)
+  taxRate       Float    @default(0) // percentage
+  specialRequests String?
+  checkInActual  DateTime?
+  checkOutActual DateTime?
+  cancelledAt   DateTime?
+  cancellationReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guest    Guest  @relation(fields: [guestId], references: [id])
+  room     Room   @relation(fields: [roomId], references: [id])
+  user     User?  @relation(fields: [createdBy], references: [id])
+  createdBy String?
+  payments Payment[]
+  invoice  Invoice?
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkIn])
+  @@unique([tenantId, bookingCode])
+}
+
+// ─── Payments & Billing ─────────────────────────────────────────────────────
+
+model Payment {
+  id          String   @id @default(cuid())
+  tenantId    String
+  bookingId   String?
+  invoiceId   String?
+  guestId     String?
+  amount      Float
+  method      String   @default("cash") // cash | upi | card | bank_transfer
+  type        String   @default("advance") // advance | room | food | extra_bed | other | balance | refund
+  reference   String?
+  notes       String?
+  status      String   @default("completed") // pending | completed | failed
+  createdAt   DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  booking  Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  guest   Guest?  @relation(fields: [guestId], references: [id])
+  user    User?    @relation(fields: [receivedBy], references: [id])
+  receivedBy String?
+
+  @@index([tenantId, createdAt])
+  @@index([bookingId])
+}
+
+model Invoice {
+  id           String   @id @default(cuid())
+  tenantId     String
+  invoiceCode  String
+  bookingId    String   @unique
+  guestId      String
+  subtotal     Float
+  discount     Float    @default(0)
+  taxAmount    Float    @default(0)
+  total        Float
+  paidAmount   Float    @default(0)
+  balance      Float    @default(0)
+  status       String   @default("unpaid") // unpaid | partial | paid
+  itemsJson    String   @default("[]") // JSON array of line items
+  createdAt    DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@index([tenantId, createdAt])
+  @@unique([tenantId, invoiceCode])
+}
+
+// ─── Expenses ───────────────────────────────────────────────────────────────
+
+model Expense {
+  id          String   @id @default(cuid())
+  tenantId    String
+  category    String   // utilities | salaries | supplies | maintenance | marketing | food | misc
+  amount      Float
+  description String?
+  method      String   @default("cash")
+  date        DateTime @default(now())
+  receiptUrl  String?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+  userId String?
+
+  @@index([tenantId, date])
+}
+
+// ─── Housekeeping ───────────────────────────────────────────────────────────
+
+model HousekeepingTask {
+  id          String   @id @default(cuid())
+  tenantId    String
+  roomId      String
+  assignedTo  String?  // user id
+  status      String   @default("pending") // pending | in_progress | done | inspection | blocked
+  priority    String   @default("normal") // low | normal | high
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [assignedTo], references: [id])
+
+  @@index([tenantId, status])
+}
+
+// ─── Notifications & Audit ──────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  tenantId  String
+  type      String   // booking | check_in | check_out | payment | cancellation | maintenance | system
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, read])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+}
+
+// ─── Subscriptions ──────────────────────────────────────────────────────────
+
+model SubscriptionPlan {
+  id          String  @id @default(cuid())
+  name        String
+  price       Float
+  interval    String  @default("monthly") // monthly | yearly
+  maxRooms    Int     @default(20)
+  maxUsers    Int     @default(5)
+  features    String  @default("[]") // JSON array
+  active      Boolean @default(true)
+  subscriptions TenantSubscription[]
+}
+
+model TenantSubscription {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  planId    String
+  status    String   @default("active") // active | cancelled | past_due
+  startedAt DateTime @default(now())
+  endsAt    DateTime?
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id])
+}
