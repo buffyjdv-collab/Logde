@@ -21,15 +21,12 @@ import type {
 } from "./types";
 
 const TENANT_HEADER = "x-tenant-id";
-const USER_HEADER = "x-user-id";
 
 function getHeaders(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (typeof window !== "undefined") {
     const tenant = localStorage.getItem("lodgehub-tenant");
-    const user = localStorage.getItem("lodgehub-user-id");
     if (tenant) h[TENANT_HEADER] = tenant;
-    if (user) h[USER_HEADER] = user;
   }
   return h;
 }
@@ -39,6 +36,7 @@ async function api<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(path, {
+    credentials: "include", // send httpOnly cookies
     ...options,
     headers: {
       ...getHeaders(),
@@ -51,6 +49,41 @@ async function api<T>(
   }
   return res.json();
 }
+
+// Auth
+export const authApi = {
+  login: (email: string, password: string) =>
+    api<{
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+      roleId: string | null;
+      avatar: string | null;
+      isSuperAdmin: boolean;
+      permissions: string[];
+      menuItems: string[];
+      tenant: { id: string; name: string; slug: string; plan: string; status: string; currency: string } | null;
+    }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () =>
+    api<{ success: boolean }>("/api/auth/logout", { method: "POST" }),
+  me: () =>
+    api<{
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+      roleId: string | null;
+      avatar: string | null;
+      isSuperAdmin: boolean;
+      permissions: string[];
+      menuItems: string[];
+      tenant: { id: string; name: string; slug: string; plan: string; status: string; currency: string } | null;
+    }>("/api/auth/me"),
+};
 
 // Dashboard
 export const dashboardApi = {

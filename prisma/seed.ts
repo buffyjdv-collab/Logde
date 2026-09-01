@@ -2,12 +2,16 @@
 // Run with: bun prisma/seed.ts
 
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import {
   PERMISSION_CATALOG,
   DEFAULT_ROLE_PERMISSIONS,
 } from "../src/lib/permissions";
 
 const db = new PrismaClient();
+
+const DEMO_PASSWORD = "lodgehub123";
+const PASSWORD_HASH = bcrypt.hashSync(DEMO_PASSWORD, 10);
 
 const TENANT_ID = "tenant_pinevalley";
 const PROPERTY_ID = "prop_main";
@@ -136,7 +140,7 @@ async function main() {
       tenantId: platformTenant.id,
       name: "Platform Super Admin",
       email: "superadmin@lodgehub.app",
-      password: "hashed_demo_password",
+      password: PASSWORD_HASH,
       role: "super_admin",
       roleId: superAdminRole.id,
       phone: "9000000000",
@@ -213,7 +217,7 @@ async function main() {
         propertyId: property.id,
         name: s.name,
         email: s.email,
-        password: "hashed_demo_password",
+        password: PASSWORD_HASH,
         role: s.role,
         roleId: roleByRoleName[s.role],
         phone: "9" + Math.floor(1000000000 + Math.random() * 8999999999).toString(),
@@ -775,7 +779,7 @@ async function main() {
       tenantId: tenant2.id,
       name: "Ravi Nair",
       email: "owner@sunsetbeach.in",
-      password: "hashed_demo_password",
+      password: PASSWORD_HASH,
       role: "owner",
       roleId: t2OwnerRole.id,
       phone: "919876543210",

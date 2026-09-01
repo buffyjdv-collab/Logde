@@ -38,15 +38,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       tenantId: "tenant_pinevalley",
       tenantName: "Pine Valley Lodge",
-      currentUser: {
-        id: "demo-owner",
-        name: "Aditya Khanna",
-        email: "owner@pinevalley.in",
-        role: "owner",
-        avatar: null,
-        permissions: [],
-        menuItems: [],
-      },
+      currentUser: null, // null until /api/auth/me resolves
       activeView: "dashboard",
       quickAction: null,
       sidebarOpen: false,
@@ -58,13 +50,8 @@ export const useAppStore = create<AppState>()(
       },
       setUser: (u) => {
         set({ currentUser: u });
-        if (typeof window !== "undefined") {
-          if (u) {
-            localStorage.setItem("lodgehub-user-id", u.id);
-          } else {
-            localStorage.removeItem("lodgehub-user-id");
-          }
-        }
+        // Note: session is managed via httpOnly cookie on the server;
+        // we only persist the activeView + tenantId locally.
       },
       setView: (v) => set({ activeView: v, sidebarOpen: false }),
       setQuickAction: (a) => set({ quickAction: a }),
@@ -93,7 +80,8 @@ export const useAppStore = create<AppState>()(
         activeView: s.activeView,
         tenantId: s.tenantId,
         tenantName: s.tenantName,
-        currentUser: s.currentUser,
+        // NOTE: currentUser is intentionally NOT persisted — it's rehydrated
+        // from the httpOnly session cookie on every page load via /api/auth/me.
       }),
     }
   )

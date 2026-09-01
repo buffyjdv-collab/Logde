@@ -5,7 +5,7 @@ import { useTheme } from "next-themes";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Menu, Bell, Sun, Moon, Plus, LogIn, LogOut, CreditCard,
-  ShieldCheck, Building2,
+  LogOut as LogOutIcon, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,12 +15,14 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sidebar } from "./sidebar";
 import { useAppStore } from "@/lib/store";
-import { notificationsApi } from "@/lib/api";
+import { notificationsApi, authApi } from "@/lib/api";
 import { formatDate } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -32,6 +34,7 @@ export function Header() {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const setQuickAction = useAppStore((s) => s.setQuickAction);
   const currentUser = useAppStore((s) => s.currentUser);
+  const setUser = useAppStore((s) => s.setUser);
   const isSuperAdmin = currentUser?.isSuperAdmin;
   const queryClient = useQueryClient();
 
@@ -51,34 +54,17 @@ export function Header() {
     },
   });
 
-  const switchPersona = async (as: "superadmin" | "owner") => {
+  const logout = async () => {
     try {
-      const res = await fetch(`/api/auth/me?as=${as}`);
-      const data = await res.json();
-      useAppStore.getState().setUser({
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        role: data.role,
-        roleId: data.roleId,
-        avatar: data.avatar,
-        isSuperAdmin: data.isSuperAdmin,
-        permissions: data.permissions || [],
-        menuItems: data.menuItems || [],
-      });
-      if (data.tenant) {
-        useAppStore.getState().setTenant(data.tenant.id, data.tenant.name);
-      }
+      await authApi.logout();
       queryClient.clear();
-      if (as === "superadmin") {
-        useAppStore.getState().setView("platform_dashboard");
-        toast.success("Switched to Super Admin");
-      } else {
-        useAppStore.getState().setView("dashboard");
-        toast.success("Switched to Lodge Owner");
-      }
+      setUser(null);
+      toast.success("Logged out successfully");
     } catch {
-      toast.error("Failed to switch persona");
+      // Even if the API call fails, clear local state
+      queryClient.clear();
+      setUser(null);
+      toast.success("Logged out");
     }
   };
 
@@ -136,36 +122,6 @@ export function Header() {
         <Moon className="absolute h-[18px] w-[18px] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
       </Button>
 
-      {/* Persona switcher */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="gap-1.5">
-            {isSuperAdmin ? (
-              <ShieldCheck className="h-4 w-4 text-rose-600" />
-            ) : (
-              <Building2 className="h-4 w-4 text-primary" />
-            )}
-            <span className="hidden sm:inline">
-              {isSuperAdmin ? "Super Admin" : "Lodge"}
-            </span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel className="text-xs text-muted-foreground">
-            Switch View
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => switchPersona("superadmin")}>
-            <ShieldCheck className="mr-2 h-4 w-4" />
-            Super Admin Console
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => switchPersona("owner")}>
-            <Building2 className="mr-2 h-4 w-4" />
-            Lodge Owner (Pine Valley)
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
       {/* Notifications (tenant only) */}
       {!isSuperAdmin && (
         <Popover open={notifOpen} onOpenChange={setNotifOpen}>
@@ -218,6 +174,49 @@ export function Header() {
         <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setQuickAction("payment")} aria-label="Quick payment">
           <CreditCard className="h-[18px] w-[18px]" />
         </Button>
+      )}
+
+      {/* User menu with logout */}
+      {currentUser && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-2 pl-1.5 pr-2">
+              <Avatar className="h-7 w-7">
+                <AvatarFallback
+                  className={cn(
+                    "text-xs font-semibold",
+                    isSuperAdmin ? "bg-rose-600/15 text-rose-600" : "bg-primary/15 text-primary"
+                  )}
+                >
+                  {currentUser.name?.charAt(0).toUpperCase() || "U"}
+                </AvatarFallback>
+              </Avatar>
+              <span className="hidden sm:inline text-sm font-medium max-w-[120px] truncate">
+                {currentUser.name}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuLabel className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium truncate">{currentUser.name}</span>
+              <span className="text-xs font-normal text-muted-foreground truncate">
+                {currentUser.email}
+              </span>
+              <span className="text-xs font-normal text-muted-foreground capitalize">
+                {isSuperAdmin ? "Super Admin" : currentUser.role?.replace("_", " ")}
+              </span>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={logout}
+              className="text-rose-600 dark:text-rose-400 focus:text-rose-700 dark:focus:text-rose-300 focus:bg-rose-500/10 cursor-pointer"
+            >
+              <LogOutIcon className="mr-2 h-4 w-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </header>
   );

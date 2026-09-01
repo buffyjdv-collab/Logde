@@ -6,47 +6,36 @@ import { DEFAULT_ROLE_PERMISSIONS } from "@/lib/permissions";
 
 /**
  * GET /api/auth/me
- * Returns the current user with their role + permissions + menu items.
+ * Returns the currently authenticated user (from the session cookie) with
+ * their role, permissions, menu items, and tenant.
+ *
+ * Returns 401 if not authenticated.
  */
-export async function GET(req: NextRequest) {
-  const as = req.nextUrl.searchParams.get("as");
-  let userId = await getUserId();
+export async function GET(_req: NextRequest) {
+  const userId = await getUserId();
 
-  if (as === "superadmin") userId = "user_superadmin";
-  if (as === "owner") userId = undefined;
-
-  let user;
-  if (userId) {
-    user = await db.user.findUnique({
-      where: { id: userId },
-      include: {
-        roleRef: {
-          include: {
-            permissions: { include: { permission: true } },
-          },
-        },
-        tenant: true,
-      },
-    });
+  if (!userId) {
+    return error("Not authenticated", 401);
   }
 
-  if (!user) {
-    user = await db.user.findFirst({
-      where: { role: "owner", tenantId: "tenant_pinevalley" },
-      include: {
-        roleRef: {
-          include: {
-            permissions: { include: { permission: true } },
-          },
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    include: {
+      roleRef: {
+        include: {
+          permissions: { include: { permission: true } },
         },
-        tenant: true,
       },
-    });
+      tenant: true,
+    },
+  });
+
+  if (!user || !user.active) {
+    return error("Not authenticated", 401);
   }
 
-  if (!user) return error("No user found", 404);
-
-  const permissions = user.roleRef?.permissions.map((rp) => rp.permission.key) || [];
+  const permissions =
+    user.roleRef?.permissions.map((rp) => rp.permission.key) || [];
   const menuItems = user.roleRef?.menuItems
     ? JSON.parse(user.roleRef.menuItems)
     : DEFAULT_ROLE_PERMISSIONS[user.role]?.menuItems || [];

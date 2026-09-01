@@ -1,6 +1,7 @@
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 import { db } from "./db";
 import type { UserRole } from "./types";
+import { SESSION_COOKIE, verifySession } from "./session";
 
 // Default tenant for demo (single-tenant demo with multi-tenant-ready schema)
 export const DEFAULT_TENANT_ID = "tenant_pinevalley";
@@ -8,9 +9,7 @@ export const PLATFORM_TENANT_ID = "tenant_platform";
 export const SUPER_ADMIN_USER_ID = "user_superadmin";
 
 /**
- * Get the tenant ID from the request header.
- * For the platform/super-admin context, we read an x-user-id header that the
- * client sets after "logging in" as super admin.
+ * Get the tenant ID from the request header (client may switch context).
  */
 export async function getTenantId(): Promise<string> {
   const h = await headers();
@@ -19,10 +18,15 @@ export async function getTenantId(): Promise<string> {
 }
 
 /**
- * Get the acting user id (for permission checks). The client stores the
- * current user id in localStorage and sends it via the x-user-id header.
+ * Get the acting user id from the signed httpOnly session cookie.
+ * Falls back to the x-user-id header for backward compatibility during
+ * the transition (demo quick-login).
  */
 export async function getUserId(): Promise<string | null> {
+  const c = await cookies();
+  const cookieVal = c.get(SESSION_COOKIE)?.value;
+  const fromCookie = verifySession(cookieVal);
+  if (fromCookie) return fromCookie;
   const h = await headers();
   return h.get("x-user-id") || null;
 }
