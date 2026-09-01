@@ -12,13 +12,6 @@ import {
   Tag,
   CalendarDays,
 } from "lucide-react";
-import {
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-} from "recharts";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
@@ -30,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableBody,
@@ -178,13 +172,15 @@ export function ExpensesView() {
       .filter((e) => isSameMonth(new Date(e.date), new Date()))
       .reduce((s, e) => s + e.amount, 0);
 
-    const byCategory = Object.entries(EXPENSE_CATEGORIES).map(([key, conf]) => ({
-      key,
-      label: conf.label,
-      amount: expenses
-        .filter((e) => e.category === key)
-        .reduce((s, e) => s + e.amount, 0),
-    }));
+    const byCategory = Object.entries(EXPENSE_CATEGORIES).map(([key, conf]) => {
+      const matching = expenses.filter((e) => e.category === key);
+      return {
+        key,
+        label: conf.label,
+        count: matching.length,
+        amount: matching.reduce((s, e) => s + e.amount, 0),
+      };
+    });
 
     const top3 = [...byCategory]
       .filter((c) => c.amount > 0)
@@ -335,7 +331,7 @@ export function ExpensesView() {
         </Card>
       )}
 
-      {/* Pie chart */}
+      {/* Category breakdown table */}
       <Card className="p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -346,63 +342,60 @@ export function ExpensesView() {
           </div>
         </div>
         {chartData.length === 0 ? (
-          <div className="flex h-[240px] items-center justify-center">
+          <div className="flex h-[160px] items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No expenses in this range
             </p>
           </div>
         ) : (
-          <div className="flex flex-col lg:flex-row items-center gap-4">
-            <div className="w-full lg:w-1/2">
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie
-                    data={chartData}
-                    dataKey="amount"
-                    nameKey="label"
-                    innerRadius={60}
-                    outerRadius={90}
-                    paddingAngle={2}
-                  >
-                    {chartData.map((entry, i) => (
-                      <Cell key={i} fill={entry.hex} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: 8,
-                      border: "1px solid var(--border)",
-                      fontSize: 12,
-                    }}
-                    formatter={(v: number) => formatCurrency(v)}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs w-full lg:w-1/2">
-              {chartData
-                .sort((a, b) => b.amount - a.amount)
-                .map((c) => {
-                  const pct =
-                    stats.total > 0
-                      ? Math.round((c.amount / stats.total) * 100)
-                      : 0;
-                  return (
-                    <div key={c.key} className="flex items-center gap-2">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      <span className="text-muted-foreground truncate">
-                        {c.label}
-                      </span>
-                      <span className="ml-auto font-medium tabular-nums">
-                        {pct}%
-                      </span>
-                    </div>
-                  );
-                })}
-            </div>
+          <div className="overflow-x-auto scrollbar-thin -mx-1">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs pl-1">Category</TableHead>
+                  <TableHead className="text-right text-xs">Count</TableHead>
+                  <TableHead className="text-right text-xs">Amount</TableHead>
+                  <TableHead className="text-right text-xs pr-1">% of Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {chartData
+                  .sort((a, b) => b.amount - a.amount)
+                  .map((c) => {
+                    const pct =
+                      stats.total > 0
+                        ? Math.round((c.amount / stats.total) * 100)
+                        : 0;
+                    return (
+                      <TableRow key={c.key} className="hover:bg-muted/40 transition-colors">
+                        <TableCell className="pl-1 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: c.hex }}
+                            />
+                            <span className="text-sm font-medium">{c.label}</span>
+                          </div>
+                          <Progress
+                            value={pct}
+                            className="h-1 mt-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--pc)]"
+                            style={{ ["--pc" as string]: c.hex } as React.CSSProperties}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                          {c.count}
+                        </TableCell>
+                        <TableCell className="text-right text-sm font-semibold tabular-nums">
+                          {formatCurrency(c.amount)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums pr-1">
+                          {pct}%
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+              </TableBody>
+            </Table>
           </div>
         )}
       </Card>

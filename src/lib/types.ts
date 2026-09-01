@@ -277,4 +277,138 @@ export type ViewKey =
   | "expenses"
   | "reports"
   | "staff"
-  | "settings";
+  | "settings"
+  // Super Admin views
+  | "platform_dashboard"
+  | "tenants"
+  | "platform_fees"
+  | "platform_plans"
+  | "platform_audit";
+
+// ── RBAC types ────────────────────────────────────────────────────────────
+
+export interface Permission {
+  id: string;
+  key: string;
+  module: string;
+  action: string;
+  label: string;
+  description: string | null;
+  isSuperAdmin: boolean;
+}
+
+export interface Role {
+  id: string;
+  tenantId: string | null;
+  name: string;
+  label: string;
+  description: string | null;
+  isSystem: boolean;
+  isSuperAdmin: boolean;
+  menuItems: string[];
+  permissions: Permission[];
+  userCount?: number;
+}
+
+// ── Platform / Super Admin types ───────────────────────────────────────────
+
+export interface PlatformFeeConfig {
+  id: string;
+  tenantId: string;
+  feeType: "percentage" | "fixed_monthly" | "per_booking";
+  feeValue: number;
+  active: boolean;
+  notes: string | null;
+}
+
+export interface PlatformFeePayment {
+  id: string;
+  tenantId: string;
+  period: string;
+  grossRevenue: number;
+  feeRate: number;
+  amountDue: number;
+  amountPaid: number;
+  status: "pending" | "partial" | "paid" | "overdue";
+  method: string | null;
+  reference: string | null;
+  dueDate: string;
+  paidAt: string | null;
+}
+
+export interface PlatformDashboard {
+  totalTenants: number;
+  activeTenants: number;
+  suspendedTenants: number;
+  totalUsers: number;
+  totalBookings: number;
+  totalGrossRevenue: number;
+  totalPlatformFeesCollected: number;
+  totalPlatformFeesPending: number;
+  mrr: number;
+  tenants: (Tenant & {
+    userCount: number;
+    bookingCount: number;
+    grossRevenue: number;
+    feesCollected: number;
+    feesPending: number;
+    platformFeeConfig: PlatformFeeConfig | null;
+  })[];
+  recentFeePayments: (PlatformFeePayment & { tenant: Tenant })[];
+}
+
+export interface RevenueReport {
+  range: string;
+  totals: {
+    grossRevenue: number;
+    platformFee: number;
+    netRevenue: number;
+    taxes: number;
+    expenses: number;
+    netProfit: number;
+    bookings: number;
+  };
+  daily: {
+    date: string;
+    grossRevenue: number;
+    platformFee: number;
+    netRevenue: number;
+    bookings: number;
+  }[];
+  byRoomType: {
+    roomType: string;
+    bookings: number;
+    grossRevenue: number;
+    platformFee: number;
+    netRevenue: number;
+  }[];
+  bySource: {
+    source: string;
+    bookings: number;
+    grossRevenue: number;
+    platformFee: number;
+  }[];
+  byPaymentMethod: {
+    method: string;
+    amount: number;
+    count: number;
+  }[];
+  platformFeeSummary: {
+    feeType: string;
+    feeValue: number;
+    calculatedFee: number;
+    paid: number;
+    pending: number;
+  };
+  outstandingBookings: {
+    bookingCode: string;
+    guestName: string;
+    roomNumber: string;
+    checkIn: string;
+    checkOut: string;
+    grossAmount: number;
+    platformFee: number;
+    netAmount: number;
+  }[];
+}
+

@@ -1,5 +1,5 @@
 // LodgeHub — Prisma schema (SQLite)
-// Multi-tenant Lodge Management SaaS
+// Multi-tenant Lodge Management SaaS with molecular RBAC + platform fee system
 
 generator client {
   provider = "prisma-client-js"
@@ -29,6 +29,7 @@ model Tenant {
 
   properties    Property[]
   users         User[]
+  roles         Role[]
   roomTypes     RoomType[]
   rooms         Room[]
   guests        Guest[]
@@ -40,6 +41,8 @@ model Tenant {
   notifications Notification[]
   auditLogs     AuditLog[]
   subscription  TenantSubscription?
+  platformFeeConfig  PlatformFeeConfig?
+  platformFeePayments PlatformFeePayment[]
 }
 
 model Property {
@@ -57,13 +60,64 @@ model Property {
   users    User[]
 }
 
+// ─── RBAC: Molecular Permission System ──────────────────────────────────────
+//
+// Permission = a granular capability key like "bookings.create", "rooms.edit_status".
+// Role = a named bundle of permissions, scoped to a tenant (or system for super_admin).
+// User → Role → Permissions.
+// Menu visibility is derived from permissions (each nav item declares a required
+// permission key).
+
+model Permission {
+  id          String @id @default(cuid())
+  key         String @unique // e.g. "bookings.create"
+  module      String // bookings | rooms | guests | payments | expenses | housekeeping | reports | staff | settings | dashboard | frontdesk | tenants | platform
+  action      String // view | create | edit | delete | checkin | checkout | cancel | manage_roles | manage_fees | ...
+  label       String // human-friendly
+  description String?
+  isSuperAdmin Boolean @default(false) // true for platform-level permissions only super_admin can hold
+
+  roles RolePermission[]
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String?  // null = global/system role (super_admin, platform_owner)
+  name        String   // super_admin | owner | manager | receptionist | housekeeping | accountant | custom-xxx
+  label       String
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be deleted
+  isSuperAdmin Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  permissions RolePermission[]
+  users       User[]
+  menuItems   String   @default("[]") // JSON array of nav item keys explicitly assigned
+
+  @@unique([tenantId, name])
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
 model User {
   id        String   @id @default(cuid())
-  tenantId  String
+  tenantId  String   // super admin tenant id = "platform"
   name      String
   email     String
   password  String
-  role      String   @default("receptionist") // super_admin | owner | manager | receptionist | housekeeping | accountant
+  role      String   @default("receptionist") // legacy role string (kept for compatibility)
+  roleId     String? // molecular role id
   phone     String?
   avatar    String?
   active    Boolean  @default(true)
@@ -72,6 +126,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleRef     Role?      @relation(fields: [roleId], references: [id])
   property    Property?  @relation(fields: [propertyId], references: [id])
   propertyId  String?
   bookings    Booking[]
@@ -79,6 +134,9 @@ model User {
   expenses    Expense[]
   housekeeping HousekeepingTask[]
   auditLogs   AuditLog[]
+
+  @@index([tenantId])
+  @@index([roleId])
 }
 
 // ─── Rooms ──────────────────────────────────────────────────────────────────
@@ -245,7 +303,7 @@ model Invoice {
 model Expense {
   id          String   @id @default(cuid())
   tenantId    String
-  category    String   // utilities | salaries | supplies | maintenance | marketing | food | misc
+  category    String   // utilities | salaries | supplies | maintenance | marketing | food | misc | platform_fee
   amount      Float
   description String?
   method      String   @default("cash")
@@ -286,7 +344,7 @@ model HousekeepingTask {
 model Notification {
   id        String   @id @default(cuid())
   tenantId  String
-  type      String   // booking | check_in | check_out | payment | cancellation | maintenance | system
+  type      String   // booking | check_in | check_out | payment | cancellation | maintenance | system | platform_fee
   title     String
   message   String
   read      Boolean  @default(false)
@@ -337,4 +395,44 @@ model TenantSubscription {
 
   tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   plan   SubscriptionPlan @relation(fields: [planId], references: [id])
+}
+
+// ─── Platform Fee System (Super Admin → Tenants) ────────────────────────────
+//
+// Super Admin configures a platform fee for each tenant (e.g. 5% of revenue, or
+// a fixed monthly amount). Tenants owe platform-fee payments tracked here.
+
+model PlatformFeeConfig {
+  id          String   @id @default(cuid())
+  tenantId    String   @unique
+  feeType     String   @default("percentage") // percentage | fixed_monthly | per_booking
+  feeValue    Float    @default(5) // % of revenue OR fixed amount OR per-booking amount
+  active      Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model PlatformFeePayment {
+  id          String   @id @default(cuid())
+  tenantId    String
+  period      String   // "2026-08" (month) for monthly, or booking code for per-booking
+  grossRevenue Float   @default(0) // revenue base for the period
+  feeRate     Float    @default(0) // snapshot of the rate applied
+  amountDue   Float    @default(0)
+  amountPaid  Float    @default(0)
+  status      String   @default("pending") // pending | partial | paid | overdue
+  method      String?  // cash | upi | card | bank_transfer
+  reference   String?
+  dueDate     DateTime
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@unique([tenantId, period])
 }

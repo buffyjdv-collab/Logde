@@ -11,17 +11,27 @@ import type {
   User,
   Invoice,
   AuditLog,
+  Role,
+  Permission,
+  Tenant,
+  PlatformFeeConfig,
+  PlatformFeePayment,
+  PlatformDashboard,
+  RevenueReport,
 } from "./types";
 
 const TENANT_HEADER = "x-tenant-id";
+const USER_HEADER = "x-user-id";
 
-function getTenantId(): string {
+function getHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
   if (typeof window !== "undefined") {
-    return (
-      localStorage.getItem("lodgehub-tenant") || "tenant_pinevalley"
-    );
+    const tenant = localStorage.getItem("lodgehub-tenant");
+    const user = localStorage.getItem("lodgehub-user-id");
+    if (tenant) h[TENANT_HEADER] = tenant;
+    if (user) h[USER_HEADER] = user;
   }
-  return "tenant_pinevalley";
+  return h;
 }
 
 async function api<T>(
@@ -31,8 +41,7 @@ async function api<T>(
   const res = await fetch(path, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
-      [TENANT_HEADER]: getTenantId(),
+      ...getHeaders(),
       ...(options.headers || {}),
     },
   });
@@ -180,6 +189,8 @@ export const staffApi = {
 export const reportsApi = {
   get: (range: "7d" | "30d" | "90d" | "1y" = "30d") =>
     api<ReportData>(`/api/reports?range=${range}`),
+  revenue: (range: "7d" | "30d" | "90d" | "1y" = "30d") =>
+    api<RevenueReport>(`/api/reports/revenue?range=${range}`),
 };
 
 // Notifications
@@ -194,4 +205,49 @@ export const notificationsApi = {
 // Audit logs
 export const auditApi = {
   list: () => api<AuditLog[]>("/api/audit"),
+};
+
+// ── RBAC: Roles, Permissions, Users with roles ──────────────────────────────
+export const permissionsApi = {
+  list: () => api<Permission[]>("/api/permissions"),
+};
+
+export const rolesApi = {
+  list: () => api<Role[]>("/api/roles"),
+  create: (data: { name: string; label: string; description?: string; permissionKeys: string[]; menuItems: string[] }) =>
+    api<Role>("/api/roles", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: { label?: string; description?: string; permissionKeys?: string[]; menuItems?: string[] }) =>
+    api<Role>(`/api/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    api<{ success: boolean }>(`/api/roles/${id}`, { method: "DELETE" }),
+};
+
+export const usersRbacApi = {
+  list: () => api<User[]>("/api/staff"),
+  assignRole: (userId: string, roleId: string) =>
+    api<User>(`/api/staff/${userId}/role`, { method: "PATCH", body: JSON.stringify({ roleId }) }),
+};
+
+// ── Super Admin: Tenants ────────────────────────────────────────────────────
+export const tenantsApi = {
+  list: () => api<Tenant[]>("/api/super/tenants"),
+  create: (data: { name: string; contactEmail: string; contactPhone?: string; address?: string; plan?: string; feeType?: string; feeValue?: number }) =>
+    api<Tenant>("/api/super/tenants", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<Tenant>) =>
+    api<Tenant>(`/api/super/tenants/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+};
+
+// ── Super Admin: Platform Fees ───────────────────────────────────────────────
+export const platformFeesApi = {
+  configs: () => api<(PlatformFeeConfig & { tenant: Tenant })[]>("/api/super/platform-fees"),
+  updateConfig: (tenantId: string, data: { feeType?: string; feeValue?: number; active?: boolean; notes?: string }) =>
+    api<PlatformFeeConfig>(`/api/super/platform-fees/${tenantId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  payments: () => api<(PlatformFeePayment & { tenant: Tenant })[]>("/api/super/platform-fee-payments"),
+  recordPayment: (id: string, data: { amount: number; method: string; reference?: string }) =>
+    api<PlatformFeePayment>(`/api/super/platform-fee-payments/${id}/pay`, { method: "POST", body: JSON.stringify(data) }),
+};
+
+// ── Super Admin: Dashboard ──────────────────────────────────────────────────
+export const superDashboardApi = {
+  get: () => api<PlatformDashboard>("/api/super/dashboard"),
 };

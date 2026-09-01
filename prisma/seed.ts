@@ -2,6 +2,10 @@
 // Run with: bun prisma/seed.ts
 
 import { PrismaClient } from "@prisma/client";
+import {
+  PERMISSION_CATALOG,
+  DEFAULT_ROLE_PERMISSIONS,
+} from "../src/lib/permissions";
 
 const db = new PrismaClient();
 
@@ -44,6 +48,12 @@ function genCode(prefix: string, n: number) {
   return `${prefix}-${String(n).padStart(4, "0")}`;
 }
 
+function lastMonthKey(monthsAgo: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - monthsAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 async function main() {
   console.log("Seeding LodgeHub database...");
 
@@ -58,11 +68,80 @@ async function main() {
   await db.room.deleteMany();
   await db.roomType.deleteMany();
   await db.guest.deleteMany();
+  await db.rolePermission.deleteMany();
+  await db.role.deleteMany();
+  await db.permission.deleteMany();
+  await db.platformFeePayment.deleteMany();
+  await db.platformFeeConfig.deleteMany();
   await db.user.deleteMany();
   await db.tenantSubscription.deleteMany();
   await db.subscriptionPlan.deleteMany();
   await db.property.deleteMany();
   await db.tenant.deleteMany();
+
+  // ── Permissions catalog ────────────────────────────────────────────────
+  const permById: Record<string, string> = {};
+  for (const p of PERMISSION_CATALOG) {
+    const created = await db.permission.create({
+      data: {
+        key: p.key,
+        module: p.module,
+        action: p.action,
+        label: p.label,
+        description: p.description,
+        isSuperAdmin: p.isSuperAdmin ?? false,
+      },
+    });
+    permById[p.key] = created.id;
+  }
+
+  // ── Platform tenant + Super Admin user ────────────────────────────────
+  const platformTenant = await db.tenant.create({
+    data: {
+      id: "tenant_platform",
+      name: "LodgeHub Platform",
+      slug: "platform",
+      contactEmail: "superadmin@lodgehub.app",
+      contactPhone: "9000000000",
+      plan: "enterprise",
+      status: "active",
+      currency: "INR",
+      timezone: "Asia/Kolkata",
+    },
+  });
+
+  // Super Admin role (system, no tenant)
+  const superAdminRole = await db.role.create({
+    data: {
+      tenantId: null,
+      name: "super_admin",
+      label: "Super Admin",
+      description: "Full platform control — manages tenants, platform fees, plans & audit.",
+      isSystem: true,
+      isSuperAdmin: true,
+      menuItems: JSON.stringify(DEFAULT_ROLE_PERMISSIONS.super_admin.menuItems),
+    },
+  });
+  for (const key of DEFAULT_ROLE_PERMISSIONS.super_admin.permissions) {
+    if (permById[key]) {
+      await db.rolePermission.create({
+        data: { roleId: superAdminRole.id, permissionId: permById[key] },
+      });
+    }
+  }
+  // Super Admin user
+  await db.user.create({
+    data: {
+      id: "user_superadmin",
+      tenantId: platformTenant.id,
+      name: "Platform Super Admin",
+      email: "superadmin@lodgehub.app",
+      password: "hashed_demo_password",
+      role: "super_admin",
+      roleId: superAdminRole.id,
+      phone: "9000000000",
+    },
+  });
 
   // Tenant
   const tenant = await db.tenant.create({
@@ -101,6 +180,32 @@ async function main() {
     { name: "Gaurav Patil", email: "housekeeping@pinevalley.in", role: "housekeeping" },
     { name: "Lakshmi Menon", email: "accounts@pinevalley.in", role: "accountant" },
   ];
+
+  // Create tenant-scoped system roles + assign permissions
+  const roleByRoleName: Record<string, string> = {};
+  for (const [roleName, cfg] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+    if (roleName === "super_admin") continue; // already created globally
+    const role = await db.role.create({
+      data: {
+        tenantId: tenant.id,
+        name: roleName,
+        label: cfg.label,
+        description: cfg.description,
+        isSystem: cfg.isSystem ?? false,
+        isSuperAdmin: false,
+        menuItems: JSON.stringify(cfg.menuItems),
+      },
+    });
+    roleByRoleName[roleName] = role.id;
+    for (const key of cfg.permissions) {
+      if (permById[key]) {
+        await db.rolePermission.create({
+          data: { roleId: role.id, permissionId: permById[key] },
+        });
+      }
+    }
+  }
+
   for (const s of staff) {
     await db.user.create({
       data: {
@@ -110,6 +215,7 @@ async function main() {
         email: s.email,
         password: "hashed_demo_password",
         role: s.role,
+        roleId: roleByRoleName[s.role],
         phone: "9" + Math.floor(1000000000 + Math.random() * 8999999999).toString(),
       },
     });
@@ -628,6 +734,139 @@ async function main() {
         userId: i % 2 === 0 ? owner.id : receptionist.id,
         ...auditActions[i],
         createdAt: addDays(today, -i),
+      },
+    });
+  }
+
+  // ── Second tenant (so Super Admin has multiple to manage) ───────────────
+  const tenant2 = await db.tenant.create({
+    data: {
+      name: "Sunset Beach Resort",
+      slug: "sunset-beach",
+      contactEmail: "admin@sunsetbeach.in",
+      contactPhone: "919876543210",
+      address: "Beach Road, Goa",
+      plan: "scale",
+      status: "active",
+      currency: "INR",
+      timezone: "Asia/Kolkata",
+    },
+  });
+  // Roles for tenant 2
+  const t2OwnerRole = await db.role.create({
+    data: {
+      tenantId: tenant2.id,
+      name: "owner",
+      label: "Lodge Owner",
+      description: "Full control of the lodge.",
+      isSystem: true,
+      menuItems: JSON.stringify(DEFAULT_ROLE_PERMISSIONS.owner.menuItems),
+    },
+  });
+  for (const key of DEFAULT_ROLE_PERMISSIONS.owner.permissions) {
+    if (permById[key]) {
+      await db.rolePermission.create({
+        data: { roleId: t2OwnerRole.id, permissionId: permById[key] },
+      });
+    }
+  }
+  await db.user.create({
+    data: {
+      tenantId: tenant2.id,
+      name: "Ravi Nair",
+      email: "owner@sunsetbeach.in",
+      password: "hashed_demo_password",
+      role: "owner",
+      roleId: t2OwnerRole.id,
+      phone: "919876543210",
+    },
+  });
+
+  // A third tenant — suspended (for variety in Super Admin panel)
+  const tenant3 = await db.tenant.create({
+    data: {
+      name: "Hill View Guest House",
+      slug: "hill-view",
+      contactEmail: "info@hillview.in",
+      contactPhone: "912345678901",
+      address: "Ooty, Tamil Nadu",
+      plan: "starter",
+      status: "suspended",
+      currency: "INR",
+      timezone: "Asia/Kolkata",
+    },
+  });
+
+  // ── Platform Fee Configurations (Super Admin → Tenants) ───────────────
+  await db.platformFeeConfig.create({
+    data: {
+      tenantId: tenant.id,
+      feeType: "percentage",
+      feeValue: 5, // 5% of revenue
+      active: true,
+      notes: "5% of gross monthly revenue",
+    },
+  });
+  await db.platformFeeConfig.create({
+    data: {
+      tenantId: tenant2.id,
+      feeType: "fixed_monthly",
+      feeValue: 3000,
+      active: true,
+      notes: "₹3,000 flat monthly platform fee",
+    },
+  });
+  await db.platformFeeConfig.create({
+    data: {
+      tenantId: tenant3.id,
+      feeType: "per_booking",
+      feeValue: 50,
+      active: false,
+      notes: "Suspended tenant",
+    },
+  });
+
+  // ── Platform Fee Payments (history) ───────────────────────────────────
+  // Pine Valley — last 3 months
+  const months = [
+    { period: lastMonthKey(2), gross: 95000, rate: 5, due: 4750, paid: 4750, status: "paid", daysAgo: 60, method: "bank_transfer", ref: "NEFT-AXIS-9821" },
+    { period: lastMonthKey(1), gross: 102000, rate: 5, due: 5100, paid: 5100, status: "paid", daysAgo: 30, method: "upi", ref: "UPI-PTF-5521" },
+    { period: lastMonthKey(0), gross: 110118, rate: 5, due: 5506, paid: 0, status: "pending", daysAgo: -5, method: null, ref: null },
+  ];
+  for (const m of months) {
+    const dueDate = addDays(today, -(today.getDate())); // start of current month
+    await db.platformFeePayment.create({
+      data: {
+        tenantId: tenant.id,
+        period: m.period,
+        grossRevenue: m.gross,
+        feeRate: m.rate,
+        amountDue: m.due,
+        amountPaid: m.paid,
+        status: m.status,
+        method: m.method,
+        reference: m.ref,
+        dueDate: m.daysAgo < 0 ? addDays(today, 5) : addDays(today, -m.daysAgo),
+        paidAt: m.status === "paid" ? addDays(today, -m.daysAgo) : null,
+      },
+    });
+  }
+  // Sunset Beach — fixed monthly
+  for (let i = 2; i >= 0; i--) {
+    const dueDate = addDays(addDays(today, -i * 30), 5);
+    await db.platformFeePayment.create({
+      data: {
+        tenantId: tenant2.id,
+        period: lastMonthKey(i),
+        grossRevenue: 0,
+        feeRate: 3000,
+        amountDue: 3000,
+        amountPaid: i === 0 ? 0 : 3000,
+        status: i === 0 ? "pending" : "paid",
+        method: i === 0 ? null : "upi",
+        reference: i === 0 ? null : `UPI-SBR-${1000 + i}`,
+        dueDate,
+        paidAt: i === 0 ? null : addDays(dueDate, -2),
       },
     });
   }

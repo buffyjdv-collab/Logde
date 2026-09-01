@@ -15,16 +15,6 @@ import {
   Eye,
   FileText,
 } from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
@@ -33,6 +23,7 @@ import { EmptyState, LoadingTable } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   Tabs,
   TabsList,
@@ -235,7 +226,7 @@ export function PaymentsView() {
         />
       </div>
 
-      {/* Method breakdown bar chart */}
+      {/* Method breakdown table */}
       <Card className="p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -246,70 +237,63 @@ export function PaymentsView() {
           </div>
         </div>
         {payments.length === 0 ? (
-          <div className="flex h-[200px] items-center justify-center">
+          <div className="flex h-[160px] items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No payments in this range
             </p>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={stats.byMethod} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 11 }}
-                className="text-muted-foreground"
-              />
-              <YAxis
-                tick={{ fontSize: 11 }}
-                className="text-muted-foreground"
-                tickFormatter={(v) => `₹${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`}
-              />
-              <Tooltip
-                contentStyle={{
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  fontSize: 12,
-                }}
-                formatter={(v: number) => formatCurrency(v)}
-              />
-              <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
-                {stats.byMethod.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={METHOD_HEX[entry.method] || "#a1a1aa"}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="overflow-x-auto scrollbar-thin -mx-1">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs pl-1">Method</TableHead>
+                  <TableHead className="text-right text-xs">Count</TableHead>
+                  <TableHead className="text-right text-xs">Total Amount</TableHead>
+                  <TableHead className="text-right text-xs pr-1">% of Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stats.byMethod.map((m) => {
+                  const pct =
+                    stats.total > 0
+                      ? Math.round((m.amount / stats.total) * 100)
+                      : 0;
+                  const Icon = METHOD_ICON[m.method] ?? Banknote;
+                  const hex = METHOD_HEX[m.method] || "#a1a1aa";
+                  return (
+                    <TableRow key={m.method} className="hover:bg-muted/40 transition-colors">
+                      <TableCell className="pl-1 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: hex }}
+                          />
+                          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium">{m.label}</span>
+                        </div>
+                        <Progress
+                          value={pct}
+                          className="h-1 mt-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--pc)]"
+                          style={{ ["--pc" as string]: hex } as React.CSSProperties}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                        {m.count}
+                      </TableCell>
+                      <TableCell className="text-right text-sm font-semibold tabular-nums text-emerald-600">
+                        {formatCurrency(m.amount)}
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums pr-1">
+                        {pct}%
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         )}
-        {/* Legend with amounts */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-          {stats.byMethod.map((m) => {
-            const Icon = METHOD_ICON[m.method] ?? Banknote;
-            return (
-              <div
-                key={m.method}
-                className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2"
-              >
-                <span
-                  className="h-2.5 w-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: METHOD_HEX[m.method] || "#a1a1aa" }}
-                />
-                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="text-[11px] text-muted-foreground truncate">
-                    {m.label}
-                  </p>
-                  <p className="text-xs font-semibold tabular-nums">
-                    {formatCurrency(m.amount)}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </Card>
 
       <Tabs defaultValue="transactions">

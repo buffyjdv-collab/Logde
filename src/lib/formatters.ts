@@ -9,6 +9,11 @@ import type {
   Invoice,
   AuditLog,
   Notification,
+  Tenant,
+  Role,
+  Permission,
+  PlatformFeeConfig,
+  PlatformFeePayment,
 } from "./types";
 
 export function formatRoom(r: any): Room {
@@ -204,4 +209,82 @@ function safeParse<T>(val: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+// ── Multi-tenant / RBAC formatters ──────────────────────────────────────────
+
+export function formatTenant(t: any): Tenant {
+  return {
+    id: t.id,
+    name: t.name,
+    slug: t.slug,
+    contactEmail: t.contactEmail,
+    contactPhone: t.contactPhone ?? null,
+    address: t.address ?? null,
+    logoUrl: t.logoUrl ?? null,
+    plan: t.plan,
+    status: t.status,
+    currency: t.currency,
+    timezone: t.timezone,
+    createdAt: t.createdAt,
+  };
+}
+
+export function formatPermission(p: any): Permission {
+  return {
+    id: p.id,
+    key: p.key,
+    module: p.module,
+    action: p.action,
+    label: p.label,
+    description: p.description ?? null,
+    isSuperAdmin: !!p.isSuperAdmin,
+  };
+}
+
+export function formatRole(r: any): Role {
+  return {
+    id: r.id,
+    tenantId: r.tenantId ?? null,
+    name: r.name,
+    label: r.label,
+    description: r.description ?? null,
+    isSystem: !!r.isSystem,
+    isSuperAdmin: !!r.isSuperAdmin,
+    menuItems: safeParse(r.menuItems, []),
+    permissions: Array.isArray(r.permissions)
+      ? r.permissions.map((rp: any) =>
+          formatPermission(rp.permission ?? rp)
+        )
+      : [],
+    userCount: typeof r.userCount === "number" ? r.userCount : undefined,
+  };
+}
+
+export function formatPlatformFeeConfig(c: any): PlatformFeeConfig {
+  return {
+    id: c.id,
+    tenantId: c.tenantId,
+    feeType: c.feeType,
+    feeValue: c.feeValue,
+    active: !!c.active,
+    notes: c.notes ?? null,
+  };
+}
+
+export function formatPlatformFeePayment(p: any): PlatformFeePayment {
+  return {
+    id: p.id,
+    tenantId: p.tenantId,
+    period: p.period,
+    grossRevenue: p.grossRevenue,
+    feeRate: p.feeRate,
+    amountDue: p.amountDue,
+    amountPaid: p.amountPaid,
+    status: p.status,
+    method: p.method ?? null,
+    reference: p.reference ?? null,
+    dueDate: p.dueDate,
+    paidAt: p.paidAt ?? null,
+  };
 }

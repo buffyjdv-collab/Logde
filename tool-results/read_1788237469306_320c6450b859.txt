@@ -1,0 +1,346 @@
+     1→---
+     2→Task ID: 5
+     3→Agent: API Builder
+     4→Task: Build all LodgeHub API routes
+     5→
+     6→Work Log:
+     7→- Read the existing project scaffolding: `prisma/schema.prisma`, `src/lib/{db,server,formatters,types,constants,api}.ts`, and confirmed the API contract in `src/lib/api.ts` (the front-end client).
+     8→- Created all 22 route handlers under `src/app/api/`:
+     9→  - `dashboard/route.ts` (GET — stats, arrivals, departures, recentBookings, 14-day revenueTrend, roomStatusBreakdown, occupancyByFloor)
+    10→  - `rooms/route.ts` (GET, optional `?status=`)
+    11→  - `rooms/[id]/route.ts` (PATCH — creates housekeeping task + notification when status → cleaning/maintenance)
+    12→  - `bookings/route.ts` (GET with `?status/from/to`; POST — generates `BK-XXXX` code, computes nights × tariff, sets room → reserved, creates payment when advance > 0, audit log + notification)
+    13→  - `bookings/[id]/route.ts` (GET single; PATCH — auto-recomputes totalAmount when tariff/dates change)
+    14→  - `bookings/[id]/checkin/route.ts` (POST — sets booking → checked_in, room → occupied, audit log)
+    15→  - `bookings/[id]/checkout/route.ts` (POST — sets booking → checked_out, room → cleaning, creates housekeeping task, generates invoice `INV-XXXX` with line items + tax, marks invoice `paid` when balance = 0, returns `{booking, invoice}`)
+    16→  - `bookings/[id]/cancel/route.ts` (POST — frees room: cleaning if was occupied else available, audit + notification)
+    17→  - `guests/route.ts` (GET with `?q=` search on name/mobile/email + computed `bookingsCount/totalSpent/lastStay`; POST create)
+    18→  - `guests/[id]/route.ts` (GET single with bookings + payments; PATCH update)
+    19→  - `payments/route.ts` (GET with `?from/?to`; POST — bumps `booking.advancePaid` when `type=advance`, audit log)
+    20→  - `invoices/[id]/route.ts` (GET — includes guest via `booking.guest`)
+    21→  - `expenses/route.ts` (GET with `?from/?to/?category`; POST create with first tenant user as `userId`)
+    22→  - `expenses/[id]/route.ts` (DELETE)
+    23→  - `housekeeping/route.ts` (GET with `?status=`)
+    24→  - `housekeeping/[id]/route.ts` (PATCH — when status=done sets `completedAt` and room → available; when in_progress keeps room → cleaning; audit log)
+    25→  - `staff/route.ts` (GET — excludes password via `formatUser`; POST create with placeholder hashed password)
+    26→  - `staff/[id]/route.ts` (PATCH name/role/phone/active/propertyId)
+    27→  - `reports/route.ts` (GET `?range=7d|30d|90d|1y` — daily/monthly revenue, occupancyTrend, paymentMethodBreakdown, topRooms, expenseBreakdown, outstandingPayments, totals)
+    28→  - `notifications/route.ts` (GET list; PATCH mark-all-read)
+    29→  - `notifications/[id]/route.ts` (PATCH mark-one-read)
+    30→  - `audit/route.ts` (GET last 50 logs with user)
+    31→- Added `src/lib/booking-helpers.ts` exporting `BOOKING_INCLUDE` (the Prisma relation include set used everywhere), `withCreatedBy` (maps Prisma's `Booking.user` relation onto the `createdBy` field expected by `formatBooking`), and re-exports `formatBooking`.
+    32→- Schema fix: `prisma/schema.prisma` had a `Payment.guestId` foreign-key column but no Prisma relation, so `include: { guest: true }` (required by `formatPayment`) was rejected at runtime. Added the missing `Payment.guest` relation and the matching `Guest.payments Payment[]` back-reference, then ran `bun run db:generate` + `bun run db:push` to sync.
+    33→- Recovered from a corrupted turbopack cache (caused by deleting `.next` while the dev server was running). Killed the orphaned `next-server` process and restarted `bun run dev` detached via `(nohup setsid bun run dev > /tmp/dev-start.log 2>&1 < /dev/null &)` so it survives between Bash tool invocations.
+    34→- Smoke-tested every endpoint via curl with the `x-tenant-id: tenant_pinevalley` header — all return 200 (or 201 for POSTs). Verified the full booking lifecycle: create → check-in → checkout (invoice generated), and cancel.
+    35→- Ran `bun run lint`: only the pre-existing `prisma/seed.ts` line-1 "Unused eslint-disable directive" warning remains; zero errors and zero warnings in any of the new API files.
+    36→
+    37→Stage Summary:
+    38→- 22 route handlers shipped under `src/app/api/`, fully tenant-isolated via `getTenantId()`.
+    39→- 1 shared helper module (`src/lib/booking-helpers.ts`) keeps booking includes and the `user`→`createdBy` mapping consistent across routes.
+    40→- 1 schema fix (`Payment.guest` relation + `Guest.payments` back-reference) synced to the DB; downstream agents can now safely `include: { guest: true }` on Payment queries.
+    41→- Lint clean, all endpoints verified live against the seeded `tenant_pinevalley` data.
+    42→- Dev server is running detached as PID 3616 (parent = init/tini, port 3000). If it dies, restart with: `cd /home/z/my-project && (nohup setsid bun run dev > /tmp/dev-start.log 2>&1 < /dev/null &)`.
+    43→
+    44→---
+    45→Task ID: 7-a
+    46→Agent: View Builder (Bookings/Rooms/FrontDesk)
+    47→Task: Build Bookings, Rooms, and Front Desk views
+    48→
+    49→Work Log:
+    50→- Read `worklog.md` (Task 5 API builder), `src/lib/{types,constants,api,store}.ts`, all shared components (`PageHeader`, `StatusBadge`, `StatCard`, `EmptyState`/`LoadingTable`), and existing `dashboard-view.tsx` + the four dialog components (`new-booking`, `check-in`, `check-out`, `payment`) to align with the project's data shapes, color system, and UX patterns.
+    51→- Created `src/components/views/bookings-view.tsx`:
+    52→  - `PageHeader` with two `Select` filters (status: All + 6 statuses; source: All + walk_in/online/phone/agent) and a "New Booking" button that calls `setQuickAction("new_booking")`.
+    53→  - `Tabs` with **List** and **Calendar** tabs plus a search input (list) / prev-next-today navigator (calendar).
+    54→  - **List view**: shadcn `Table` (sticky header, `max-h-[65vh] overflow-y-auto scrollbar-thin`) showing booking code, guest avatar+name+mobile, room number+type, check-in/out dates, nights, status badge, total, balance (rose when > 0 else "Paid"), and a `DropdownMenu` with View/Check-In/Check-Out/Cancel (conditionally rendered based on status). Cap at 50 rows with a count footer.
+    55→  - **Calendar view**: 6×7 Mon–Sun grid computed in plain JS (`startOfMonth`, `endOfMonth`, `+6`-offset to make Monday the first column). Each day cell shows up to 3 booking bars (`<button>` styled with `bg-{color}-500 text-white`) sorted by status, plus a "+N more" overflow indicator. Today gets a `ring-1 ring-primary`. Legend below.
+    56→  - `BookingDetailDialog` showing guest info (avatar, mobile, email, company), room info (number, type, floor, tariff, capacity), stay grid (check-in/out, nights, guests), source/extra-bed/discount badges, special requests, full charges breakdown (room × nights + extra bed − discount + tax = total − advance = balance), payment history, and footer action buttons (Check-In if confirmed, Check-Out if checked_in, Cancel if active).
+    57→  - Separate `Dialog` for cancel confirmation with a `Textarea` reason field.
+    58→  - Mutations call `bookingsApi.checkIn/checkOut/cancel` and invalidate `["bookings"]`, `["dashboard"]`, `["rooms"]`, `["housekeeping"]`, `["payments"]`.
+    59→- Created `src/components/views/rooms-view.tsx`:
+    60→  - `PageHeader` with a "New Booking" button.
+    61→  - Top stats bar: 6 `StatCard`s (Total/Available/Occupied/Reserved/Cleaning/Maintenance) with appropriate accents.
+    62→  - Status filter pills (All + 6 statuses) with `ROOM_CARD_THEME`-driven colors when active, plus a legend strip showing all room status colors.
+    63→  - **Floor view**: rooms grouped by `floor` (ascending) with a "Floor N" badge header and a divider, then a responsive `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5` of room cards. Each card has a colored background + border reflecting its status (`bg-{color}-500/5 hover:bg-{color}-500/10 border-{color}-500/30`), big room number, room type name, capacity (`Users` icon), tariff/night, and a colored status dot + label.
+    64→  - `RoomDetailDialog` showing the room-type panel (capacity, tariff, extra-bed price, floor, amenity badges), the current booking (if occupied/reserved) with guest avatar, code, dates, nights, total, balance, click-to-call mobile link, or an "Available — create booking" callout when no booking. Status `Select` with colored dot prefix for each option. Uses the React "derived state during render" pattern (track `trackedRoomId`, call `setNewStatus` only when the room id changes) to avoid the `react-hooks/set-state-in-effect` lint error. Shows a warning toast hint when transitioning to cleaning/maintenance ("housekeeping task created").
+    65→  - `updateStatus` mutation calls `roomsApi.update(id, { status })` and invalidates `["rooms"]`, `["dashboard"]`, `["housekeeping"]`.
+    66→- Created `src/components/views/frontdesk-view.tsx`:
+    67→  - `PageHeader` "Front Desk" with description "Quick check-in and check-out workflow".
+    68→  - Top quick-action buttons row (4 large buttons): New Booking → `setQuickAction("new_booking")`, Check-In → `setQuickAction("check_in")`, Check-Out → `setQuickAction("check_out")`, Payment → `setQuickAction("payment")`, each with a colored icon tile and label/hint.
+    69→  - Summary stats bar (4 `StatCard`s): Arrivals Today (emerald), Departures Today (amber), In House (sky), Awaiting Check-In (violet). Each card's hint surfaces overdue counts when present.
+    70→  - Two-column grid (`grid-cols-1 lg:grid-cols-2`):
+    71→    - **Check-In Queue** — `bookingsApi.list({ status: "confirmed" })`, sorted today-first then overdue then upcoming. Each item shows guest avatar, name, code, room, dates, advance paid (emerald), balance (rose if > 0), a Today/Overdue/Upcoming badge, and a prominent emerald "Check In" button that opens an inline confirmation dialog. The dialog shows the booking summary, a sky-tinted balance warning if outstanding, and a "Take Payment First" button that closes the dialog and triggers `setQuickAction("payment")` so the receptionist can collect money before check-in.
+    72→    - **Check-Out Queue** — `bookingsApi.list({ status: "checked_in" })`, sorted today-first then overdue then in-house. Each item shows guest avatar, name, code, room, nights stay, total, balance, a Today/Overdue/In House badge, and an amber "Check Out" button that triggers the global `setQuickAction("check_out")` dialog (so the receptionist can add extra charges during check-out).
+    73→  - Inline check-in confirmation calls `bookingsApi.checkIn(id)` directly with `useMutation`, then toasts success and invalidates `["bookings"]`, `["dashboard"]`, `["rooms"]`, `["housekeeping"]`, `["payments"]`.
+    74→- Ran `bun run lint`. Initial errors fixed:
+    75→  - `frontdesk-view.tsx` — `Badge` was used but not imported (was importing unused `StatusBadge`/`BOOKING_STATUS`); removed `_icons` hack export, swapped import, removed unused `ArrowRight`/`Phone`.
+    76→  - `rooms-view.tsx` — `setState in useEffect` lint error; replaced `useEffect`-based `setNewStatus` sync with the React "derived state during render" pattern (`trackedRoomId` guard calling `setNewStatus` only when the room id changes). Removed unused imports (`Ban`, `Mail`, `LogIn`, `LogOut`, `ArrowRight`).
+    77→  - `bookings-view.tsx` — removed unused `Phone` and `CreditCard` imports; swapped the rotate-45 `X` trigger icon for the proper `MoreVertical` lucide icon.
+    78→- Final `bun run lint` passes with **0 errors** (only the pre-existing `prisma/seed.ts` line-1 unused eslint-disable warning, which is outside this task's scope). `bunx tsc --noEmit` reports no errors in any of the three new view files (all TS errors in the repo are from peer-agents' unfinished files: `housekeeping-view`, `payments-view`, `expenses-view`, `staff-view`, `guests-view`, plus `sidebar.tsx`'s `BadgeRound` icon).
+    79→
+    80→Stage Summary:
+    81→- 3 new view files shipped: `src/components/views/{bookings,rooms,frontdesk}-view.tsx`.
+    82→- Bookings view delivers a List tab (filterable, sortable table with row actions) and a Calendar tab (Mon-start month grid with status-colored bars, prev/next/today nav, legend), plus a full detail dialog with charges breakdown + payment history and a separate cancel-with-reason dialog.
+    83→- Rooms view delivers a visual floor-grouped card grid with status-colored cards, status filter pills, a 6-card stats bar, a legend, and a room detail dialog that shows the room-type panel, current booking (or "create booking" callout), and a status-change `Select` that triggers `roomsApi.update` + invalidates rooms/dashboard/housekeeping.
+    84→- Front Desk view delivers four big quick-action buttons, a 4-card summary stats bar (arrivals/departures today, in-house, awaiting), and two side-by-side queue cards (Check-In / Check-Out) with today/overdue/upcoming badges, plus an inline check-in confirmation dialog with balance warning and a "Take Payment First" shortcut.
+    85→- All mutations toast success/error and invalidate the proper query keys (`["bookings"]`, `["dashboard"]`, `["rooms"]`, `["housekeeping"]`, `["payments"]`).
+    86→- All three views start with `"use client";` and import only from `lucide-react`, the shared components, shadcn/ui primitives, `@/lib/{api,store,constants,utils,types}`, `@tanstack/react-query`, and `sonner` — no new dependencies added.
+    87→- Lint clean (0 errors). The dev server log shows the only outstanding compile error is `@/components/views/payments-view` (Task 7-b, not yet built) — none of the three files in this task produce any errors.
+    88→
+    89→---
+    90→Task ID: 7-c
+    91→Agent: View Builder (Reports/Staff/Settings)
+    92→Task: Build Reports, Staff, and Settings views
+    93→
+    94→Work Log:
+    95→- Read worklog.md, src/lib/{api,types,constants,store,server,db,utils,formatters}.ts, prisma/schema.prisma, prisma/seed.ts, all 4 shared UI helpers (page-header/stat-card/status-badge/empty-state), and the existing dashboard-view/payment-dialog to align with conventions and the API contract.
+    96→- Verified the available shadcn/ui exports by listing src/components/ui/* and reading card.tsx, badge.tsx, alert-dialog.tsx, collapsible.tsx, tooltip.tsx for their exact prop APIs (e.g., Badge only supports default/secondary/destructive/outline variants).
+    97→- Created `src/app/api/seed/route.ts` — POST endpoint that re-seeds the LodgeHub demo DB by spawning `bun prisma/seed.ts` via child_process.exec (promisified), with a 60s timeout, server-side logging of stdout/stderr, and a graceful error response. The seed script itself wipes every tenant model and re-inserts the Pine Valley demo dataset (rooms, room types, guests, bookings, payments, expenses, audit logs, subscription plans).
+    98→- Built `src/components/views/reports-view.tsx` (~660 lines):
+    99→  - PageHeader with a `ToggleGroup` range selector (7D / 30D / 90D / 1Y) and an Export button that builds a CSV (Date, Revenue, Bookings) from `report.dailyRevenue`, wraps it in a Blob, and triggers an anchor download named `lodgehub-revenue-{range}-{yyyy-MM-dd}.csv`.
+   100→  - Top stats row (5 StatCards): Total Revenue, Total Expenses, Net Profit (color-coded emerald/rose based on sign, with % margin hint), Avg Occupancy %, Total Bookings.
+   101→  - 5 recharts visualisations wrapped in Cards: Daily Revenue (Area + Line on dual Y axes via ResponsiveContainer), Monthly Revenue vs Expenses (grouped Bar), Payment Methods (Donut Pie + custom legend), Expense Breakdown (horizontal Bar with category-coloured Cells), Top Performing Rooms (grouped Bar with revenue+bookings).
+   102→  - Outstanding Payments table (shadcn Table) with booking code, guest, room, balance (rose), check-out date, and a "Collect" button that fires `setQuickAction("payment")` to open the existing PaymentDialog.
+   103→  - Loading skeletons (5 placeholder Cards + skeleton toggle) and EmptyState fallbacks inside each chart card.
+   104→- Built `src/components/views/staff-view.tsx` (~610 lines):
+   105→  - PageHeader "Staff & Team" with "Add Staff" button.
+   106→  - Stats row (4 StatCards): Total Staff, Active, Distinct Roles, Top Role (with member count hint).
+   107→  - Role Distribution card showing every USER_ROLE as a StatusBadge + count chip (faded when 0).
+   108→  - Team Members table with Avatar (initial fallback), name + email, role StatusBadge, phone (with Phone icon), property (with Building2 icon), active/inactive Switch (optimistic update via onMutate rollback), last login (date-fns format or "Never"), and an Edit button per row.
+   109→  - Collapsible Audit Logs card: fetches `auditApi.list()` lazily (enabled when expanded), renders the 20 most recent logs as a timeline list with user avatar initial, action badge (mono), entity badge, details, and timestamp; capped at max-h-96 with custom scrollbar.
+   110→  - Add/Edit Dialog: name, email, role Select (USER_ROLES), phone, active Switch (only shown when editing). Submits via `staffApi.create` or `staffApi.update` with react-query mutations; toast on success/error; closes & resets on success.
+   111→- Built `src/components/views/settings-view.tsx` (~880 lines):
+   112→  - Lodge Profile card (lg:col-span-2): editable name, contact email, contact phone, address, currency Select (INR/USD/EUR/GBP), timezone Select (6 zones) — Save button shows a sonner toast "Settings saved".
+   113→  - Subscription card: shows current Growth plan (price, max rooms, max users, feature list with check icons, renewal date +1 month) and an "Upgrade Plan" button opening a Dialog with all 4 plans (Starter ₹999, Growth ₹2499, Scale ₹4999, Enterprise ₹9999) as selectable cards with POPULAR/CURRENT badges, accent-coloured rings, feature lists; confirm button switches plan and shows a demo toast.
+   114→  - Appearance card: two large selectable tiles (Light/Dark) using `useTheme()` from next-themes with a mounted flag (deferred via requestAnimationFrame to satisfy react-hooks/set-state-in-effect lint rule) and a "Current theme:" hint line.
+   115→  - Notifications card: 5 notification-type rows (check_in, check_out, payment, maintenance, booking) each with an icon, label, description, and Switch bound to local state.
+   116→  - Multi-Tenant Info card: read-only InfoRow list (Tenant ID mono, Status badge, Plan badge, Created date, Region).
+   117→  - Danger Zone card (lg:col-span-2, rose border): "Re-seed Database" button gated by an AlertDialog; confirm action fires a useMutation that POSTs to `/api/seed` and invalidates all queries on success; loader spinner shown on the button while pending.
+   118→- Fixed a TypeScript error in staff-view.tsx: `BadgeRound` is not exported by lucide-react in this version. Replaced every usage (import + 3 JSX sites) with `IdCard`, which is the closest semantic match for staff ID badges and is verified to exist in the installed lucide-react version.
+   119→- Fixed a react-hooks lint error in settings-view.tsx: `useEffect(() => setMounted(true), [])` triggers the new `react-hooks/set-state-in-effect` rule. Wrapped the setState in `requestAnimationFrame` (cleaned up via `cancelAnimationFrame`) so the state update is asynchronous and the rule no longer fires.
+   120→- Ran `bun run lint` and `bunx tsc --noEmit --skipLibCheck` after each fix to confirm zero errors and zero warnings for all 4 new files (only the pre-existing `prisma/seed.ts:1` unused-eslint-disable warning remains, which is owned by Task 5's seed script).
+   121→
+   122→Stage Summary:
+   123→- 4 new files shipped: `src/app/api/seed/route.ts` (POST re-seed), `src/components/views/reports-view.tsx` (analytics), `src/components/views/staff-view.tsx` (team + audit logs), `src/components/views/settings-view.tsx` (6 settings cards).
+   124→- All views are wired into `src/app/page.tsx`'s `ActiveView` switch (cases: reports, staff, settings) and use the shared PageHeader / StatCard / StatusBadge / EmptyState / LoadingTable helpers for visual consistency with the existing dashboard view.
+   125→- Charts are responsive (ResponsiveContainer + height-bounded), colour palette stays inside the hospitality emerald theme (emerald/rose/amber/sky/violet/orange/zinc), and every interactive element provides loading skeletons, error toasts (sonner), and empty-state fallbacks.
+   126→- Reports CSV export builds the file in-browser (Blob + anchor download) — no extra API needed.
+   127→- Staff active-toggle uses optimistic updates with onMutate rollback for snappy UX; audit logs are fetched lazily only when the Collapsible is opened.
+   128→- Settings re-seed button actually calls the new POST /api/seed endpoint which spawns `bun prisma/seed.ts` server-side and invalidates all react-query caches on success.
+   129→- Lint clean for all 4 new files (0 errors, 0 warnings). TypeScript clean for all 4 new files. The dev server still shows `Module not found` errors for sibling view files owned by other parallel agents (payments-view, expenses-view, bookings-view, guests-view, housekeeping-view) — once those land, the full app will compile end-to-end.
+   130→
+   131→---
+   132→Task ID: 7-b
+   133→Agent: View Builder (Guests/Housekeeping/Payments/Expenses)
+   134→Task: Build Guests, Housekeeping, Payments, and Expenses views
+   135→
+   136→Work Log:
+   137→- Read the worklog to understand the API contract: 22 routes already shipped by Task ID 5 (`guestsApi`, `housekeepingApi`, `paymentsApi`, `expensesApi`, `invoicesApi`), plus the formatters (`formatPayment` discards `booking` and always returns `undefined` for it — so client-side booking lookup is required for payment rows).
+   138→- Reviewed the existing `dashboard-view` and `reports-view` for visual patterns (PageHeader, StatCard, EmptyState/LoadingTable, recharts usage, hospitality emerald palette, scrollbar-thin wrappers).
+   139→- Built `src/components/views/guests-view.tsx`:
+   140→  - PageHeader with debounced search input + "Add Guest" button.
+   141→  - Stats row: Total Guests, Returning (bookingsCount > 1), Blacklisted.
+   142→  - Table with avatar (initials), name, mobile/email, city (parsed from address), bookingsCount badge, totalSpent, lastStay, blacklist badge. Row click opens a Sheet.
+   143→  - Detail Sheet showing profile grid (mobile, email, address, ID type+number, company, GST, notes), stay stats summary, booking history list (code/room/dates/status/amount), payment history list (type/method/amount/ref/date), and "Edit" + "New Booking" action buttons.
+   144→  - Add/Edit Dialog with full guest fields including ID type select, GST, notes, and blacklist checkbox. Edit mode resolves guest id from a parent-managed `editingGuestId` prop (no extra API round-trip).
+   145→- Built `src/components/views/housekeeping-view.tsx`:
+   146→  - PageHeader with refresh button and an assignee-filter dropdown (all / unassigned / per-staff built from the task list).
+   147→  - 5-column summary stats: total, pending, in-progress, inspection, done.
+   148→  - Kanban board: 4 columns (pending → in_progress → inspection → done) with desktop grid + mobile vertical stack. Each card shows room number (large), type, floor, priority badge, assignee (or "Unassigned"), notes, created/completed timestamps, and an "advance status" button + a dropdown for arbitrary status moves.
+   149→  - Separate "Blocked Rooms" section below the board.
+   150→  - `housekeepingApi.update(id, { status })` mutation with toast on success ("Room X marked clean and available" when status=done) and dashboard/rooms query invalidation.
+   151→- Built `src/components/views/payments-view.tsx`:
+   152→  - PageHeader with 7d/30d/90d ToggleGroup + "Record Payment" button (triggers `setQuickAction("payment")`).
+   153→  - Stats row: Total Collected, Today's Collection, Cash+UPI combined, Outstanding (summed across checked-out bookings using a client-side `computeInvoice` helper that mirrors the server's checkout math).
+   154→  - Bar chart of payment method distribution (cash=emerald, upi=sky, card=violet, bank_transfer=amber), plus a 4-tile legend with per-method totals.
+   155→  - Tabs: Transactions & Invoices.
+   156→    - Transactions: filters for method + type, sortable-by-date table with date/guest avatar/booking code (joined from a parallel `bookingsApi.list()` query since `formatPayment` strips booking data)/type badge/method badge/reference/amount.
+   157→    - Invoices: list of checked-out bookings rendered as invoice cards (code, guest, room, dates, total/paid/balance, status badge) with a "View" action that opens a printable invoice Dialog containing line items (room × nights, extra bed), subtotal, discount, tax, total, paid, balance, and a Print button (calls `window.print()`).
+   158→- Built `src/components/views/expenses-view.tsx`:
+   159→  - PageHeader with date range ToggleGroup, category Select filter, and "Add Expense" button.
+   160→  - Stats row: Total Expenses (range), This Month, Top Category (with amount hint).
+   161→  - "Top Categories" card: progress bars for the 3 highest-spend categories with percentage + amount.
+   162→  - Pie chart (donut) of expense distribution with hex colors mapped from EXPENSE_CATEGORIES colors (emerald/sky/violet/orange/pink/amber/zinc).
+   163→  - Table: date, category badge with color dot, description, method badge, recorded-by user, amount, delete icon button.
+   164→  - Add Expense Dialog: category select (with color dots), amount with ₹ prefix, date input, method select, description textarea.
+   165→  - Delete via AlertDialog confirmation showing the expense amount + category; on confirm calls `expensesApi.delete(id)` and invalidates expenses + dashboard + reports.
+   166→- Fixed a pre-existing blocker in `src/components/layout/sidebar.tsx`: it imported `BadgeRound` from lucide-react (which doesn't exist), preventing the entire `/` route from compiling. Replaced with `IdCard` (a valid lucide-react export; same semantic — staff badge).
+   167→- Ran `bun run lint` — zero errors, zero warnings in all new files. Only the pre-existing `prisma/seed.ts` line-1 unused eslint-disable directive warning remains.
+   168→- Smoke-tested each backing API endpoint via curl (with `x-tenant-id: tenant_pinevalley`): `/api/guests`, `/api/housekeeping`, `/api/payments`, `/api/expenses`, `/api/bookings?status=checked_out` all return 200 with seeded data. Confirmed the dev server compiles cleanly (`✓ Compiled in 410ms`) and `/` responds HTTP 200 after the sidebar fix.
+   169→
+   170→Stage Summary:
+   171→- 4 view components shipped under `src/components/views/`: `guests-view.tsx`, `housekeeping-view.tsx`, `payments-view.tsx`, `expenses-view.tsx`.
+   172→- Each view is fully client-side (`"use client"`) with TanStack Query for server state, `sonner` toasts for feedback, shadcn/ui components for the chrome, and recharts for the payments bar chart + expenses donut.
+   173→- Loading and empty states wired in via the shared `<EmptyState>` / `<LoadingTable>` components; tables wrapped in `scrollbar-thin` scroll containers.
+   174→- Mobile-first: Kanban columns stack vertically on mobile, tables collapse non-essential columns (`hidden md:table-cell` / `hidden lg:table-cell`), all touch targets ≥ 32px.
+   175→- Hospitality emerald theme preserved throughout — no indigo/blue.
+   176→- Side-effect fix: `sidebar.tsx` `BadgeRound` → `IdCard` (the layout was preventing the whole app from rendering).
+   177→- All four views are reachable via the existing `ActiveView` switch in `src/app/page.tsx`; no router changes needed.
+   178→
+   179→---
+   180→Task ID: 5b
+   181→Agent: API Builder (RBAC + Super Admin + Revenue Report)
+   182→Task: Build RBAC, Super Admin, and molecular revenue report API routes
+   183→
+   184→Work Log:
+   185→- Read worklog.md (Tasks 5, 7-a, 7-b, 7-c) to understand previous work and conventions.
+   186→- Read prisma/schema.prisma, src/lib/server.ts (RBAC helpers), src/lib/permissions.ts (PERMISSION_CATALOG), src/lib/types.ts (Permission/Role/PlatformFeeConfig/PlatformFeePayment/PlatformDashboard/RevenueReport types), src/lib/formatters.ts, src/lib/db.ts, and existing route handlers (dashboard, reports, staff, audit, rooms/[id]) to align with project conventions (try/catch + json()/error() helpers, params: Promise<{...}>, formatX() for response shaping).
+   187→- Added 5 new formatters to src/lib/formatters.ts: formatTenant, formatPermission, formatRole, formatPlatformFeeConfig, formatPlatformFeePayment — all reuse the existing safeParse helper to expand menuItems JSON.
+   188→- Added RevenueReport to the type imports in src/lib/api.ts (the client was already calling /api/reports/revenue but the type was never imported → Cannot find name 'RevenueReport' TS error fixed).
+   189→- Created 13 route handlers under src/app/api/:
+   190→  - permissions/route.ts (GET — full permission catalog from PERMISSION_CATALOG ordered by module then action, joined with persisted Permission ids; no auth required)
+   191→  - roles/route.ts (GET — super admin sees system + all tenant roles, tenant users see their own only; POST — authorize("staff.manage_roles"); creates role + RolePermission rows for the supplied permissionKeys, validates unknown keys, audit log)
+   192→  - roles/[id]/route.ts (PATCH — authorize("staff.manage_roles"); system roles reject permission changes (400); permissionKeys replaces RolePermission rows; DELETE — refuses system roles + roles still assigned to users; audit log)
+   193→  - staff/[id]/role/route.ts (PATCH — authorize("staff.manage"); sets user.roleId, mirrors role name onto legacy role field for backward compat; refuses super-admin role assignment to tenant users; audit log)
+   194→  - super/dashboard/route.ts (GET — isSuperAdmin gate; returns PlatformDashboard: tenant counts, totalUsers, totalBookings, totalGrossRevenue, totalPlatformFeesCollected/Pending, mrr, per-tenant summaries with platformFeeConfig, recent 10 fee payments)
+   195→  - super/tenants/route.ts (GET — all tenants except tenant_platform with counts + platformFeeConfig; POST — isSuperAdmin gate; creates tenant with slugified unique slug, default owner role with DEFAULT_ROLE_PERMISSIONS.owner, default PlatformFeeConfig (percentage 5); audit log)
+   196→  - super/tenants/[id]/route.ts (GET — tenant with platformFeeConfig + subscription.plan + counts; PATCH — body {name?, contactEmail?, contactPhone?, address?, plan?, status?}; logs status transitions explicitly)
+   197→  - super/platform-fees/route.ts (GET — all PlatformFeeConfig with tenant included, excluding platform tenant)
+   198→  - super/platform-fees/[tenantId]/route.ts (PATCH — isSuperAdmin gate; body {feeType?, feeValue?, active?, notes?}; validates feeType ∈ {percentage, fixed_monthly, per_booking}; refuses tenant_platform; audit log)
+   199→  - super/platform-fee-payments/route.ts (GET — isSuperAdmin gate; all PlatformFeePayments with tenant included, ordered by dueDate desc; ?status= and ?tenantId= filters)
+   200→  - super/platform-fee-payments/[id]/pay/route.ts (POST — isSuperAdmin gate; body {amount, method, reference?}; caps amountPaid at amountDue; sets status=paid + paidAt=now when amountPaid >= amountDue else partial; audit log with userId)
+   201→  - super/audit/route.ts (GET — isSuperAdmin gate; most recent 100 cross-tenant audit logs with user + tenant included; ?tenantId= filter)
+   202→  - reports/revenue/route.ts (GET — authorize("reports.view"); for super admin the acting tenant is resolved from x-tenant-id header, tenant users pinned to their own tenantId; ?range=7d|30d|90d|1y default 30d; returns the full molecular RevenueReport: totals {grossRevenue, platformFee (per feeType: percentage = gross × feeValue/100, fixed_monthly = feeValue × ceil(days/30), per_booking = feeValue × bookings-in-range), netRevenue, taxes (sum invoice.taxAmount), expenses, netProfit, bookings}, daily[] per-day aggregates, byRoomType[] grouped by room.roomType.name (gross = tariff × nights + extras), bySource[], byPaymentMethod[], platformFeeSummary {feeType, feeValue, calculatedFee, paid, pending}, outstandingBookings[] (active bookings with balance > 0))
+   203→- Prisma client regenerated (bun run db:generate + bun run db:push) so db.permission, db.role, db.rolePermission, db.platformFeeConfig, db.platformFeePayment are all defined at runtime. Schema was already in sync.
+   204→- Dev server restarted (PID 2453) so the regenerated Prisma client was picked up.
+   205→- Ran bun run lint — 0 errors, 0 warnings (only the pre-existing prisma/seed.ts:1 unused-eslint-disable directive warning remains, outside this task's scope).
+   206→- Ran bunx tsc --noEmit --skipLibCheck — all 13 new files clean. The only outstanding TS error is src/app/api/auth/me/route.ts(16,23) (userId = undefined assigned to string | null), which is a pre-existing file not modified by this task.
+   207→- Smoke-tested every endpoint via curl with x-tenant-id / x-user-id headers:
+   208→  - GET /api/permissions → 37 permissions
+   209→  - GET /api/roles (super) → 7 roles (super_admin system + both tenants'); GET (tenant owner) → 5 tenant roles only
+   210→  - POST /api/roles (owner) → 201, created night_mgr with 5 permissions
+   211→  - PATCH /api/roles/[id] (replace permissions) → 200; PATCH on a system role → 400
+   212→  - DELETE /api/roles/[id] → { success: true }
+   213→  - PATCH /api/staff/[id]/role → Sara Thomas assigned to accountant role, role field mirrored
+   214→  - GET /api/super/dashboard → 3 tenants (2 active + 1 suspended), 7 users, 22 bookings, ₹112,289 gross, ₹15,850 collected, ₹8,506 pending, MRR ₹2,499
+   215→  - GET /api/super/tenants → 3 tenants with counts + platformFeeConfig
+   216→  - GET /api/super/tenants/[id] → Pine Valley with 6 users / 22 bookings / 34 rooms + Growth subscription
+   217→  - PATCH /api/super/platform-fees/tenant_platform → 400 (cannot configure platform tenant)
+   218→  - PATCH /api/super/platform-fees/[tenantId] → updated Sunset Beach feeValue to 3500 + notes
+   219→  - GET /api/super/platform-fee-payments?status=pending → filtered
+   220→  - POST /api/super/platform-fee-payments/[id]/pay ₹2,500 UPI → status=partial, paidAt=null
+   221→  - POST /api/super/platform-fee-payments/[id]/pay ₹5,000 NEFT → capped at amountDue=5506, status=paid, paidAt=now
+   222→  - GET /api/super/audit → recent cross-tenant logs with user + tenant
+   223→  - GET /api/reports/revenue?range=30d (super admin acting on tenant_pinevalley) → gross=112,289, platformFee=5,614, net=106,675, expenses=38,511, netProfit=68,164, 22 bookings, byRoomType (4), bySource (3), byPaymentMethod (3), 14 outstanding bookings
+   224→  - Forbidden cases: tenant owner hitting /api/super/tenants → 403; anonymous hitting /api/super/dashboard → 403
+   225→  - Tenant owner hitting /api/reports/revenue → 200 with correct tenant data
+   226→- Re-seeded the database after smoke testing to restore the demo state (POST /api/seed).
+   227→
+   228→Stage Summary:
+   229→- 13 new route handlers shipped under src/app/api/{permissions,roles,staff/[id]/role,super/*,reports/revenue}.
+   230→- 5 new formatters added to src/lib/formatters.ts (formatTenant, formatPermission, formatRole, formatPlatformFeeConfig, formatPlatformFeePayment).
+   231→- 1 missing import fixed in src/lib/api.ts (RevenueReport type).
+   232→- Prisma client regenerated + dev server restarted so the new RBAC + platform-fee models are queryable at runtime.
+   233→- All 13 routes verified live against the seeded demo data; lint clean, TS clean for every new file.
+   234→- Dev server is running detached as PID 2453 (port 3000). If it dies, restart with: cd /home/z/my-project && (nohup setsid bun run dev > /tmp/dev-start.log 2>&1 < /dev/null &).
+   235→
+   236→---
+   237→Task ID: 9
+   238→Agent: Frontend Builder — Revenue Report View + RBAC Staff View
+   239→
+   240→Task: Build the molecular Revenue Report view (replaces old charts-based reports-view in the router) and upgrade Staff view with full RBAC (Roles & Permissions tab).
+   241→
+   242→## Work Log
+   243→- Read `/home/z/my-project/worklog.md` (Tasks 5, 5b) and the agent-ctx notes from prior agents to confirm the API contract (`reportsApi.revenue`, `rolesApi.{list,create,update,delete}`, `usersRbacApi.assignRole`, `staffApi.{list,create,update}`) and the new `RevenueReport` / `Role` / `Permission` types.
+   244→- Read the existing `staff-view.tsx` (610 lines) to preserve the audit-logs collapsible section, optimistic-active-toggle mutation, role-distribution chips, and add/edit staff dialog before rewriting.
+   245→- Read `src/lib/permissions.ts` (PERMISSION_CATALOG + PERMISSION_GROUPS), `src/lib/constants.ts` (NAV_ITEMS, USER_ROLES, formatCurrency, formatDate, PAYMENT_METHOD, BOOKING_SOURCES), `src/lib/types.ts` (RevenueReport, Role, Permission, User), and `src/lib/store.ts` (`useAppStore.getState().setQuickAction`) to align with project conventions.
+   246→
+   247→### 1. Created `src/components/views/revenue-report-view.tsx` (NEW — replaces reports-view in the router)
+   248→The router in `src/app/page.tsx` already imports `RevenueReportView` from this path (verified by reading page.tsx), so this new file completes the molecular report deliverable.
+   249→- PageHeader "Revenue Reports" with `Table2` icon and "Molecular revenue breakdown including platform fees" description.
+   250→- Range selector: `ToggleGroup` 7D / 30D / 90D / 1Y (default 30D), wired to `reportsApi.revenue(range)`.
+   251→- Export CSV button — builds CSV from `report.daily[]` (Date, Gross Revenue, Platform Fee, Net Revenue, Bookings) plus a TOTAL row, then triggers a Blob+anchor download with a `lodgehub-revenue-{range}-{date}.csv` filename.
+   252→- **Top totals row (6 StatCards)** in a `lg:grid-cols-6` responsive grid: Gross Revenue (emerald), Platform Fee (rose), Net Revenue (emerald), Total Expenses (amber), Net Profit (emerald-or-rose color-coded with margin %), Total Bookings (sky). Net profit accent + icon flips based on sign.
+   253→- **Platform Fee Summary card** — shows the tenant's fee config (type + value as `${value}% of gross revenue` / `${value}/month` / `${value}/booking` depending on `feeType`), 4 stat tiles (Calculated Fee, Amount Paid, Amount Pending, Collection %), and a `Progress` bar showing `paid / calculatedFee`. The bar uses `bg-rose-500/10` track to match the rose-accent platform-fee theme.
+   254→- **Daily Revenue table** — Date | Gross Revenue | Platform Fee (rose text) | Net Revenue (emerald text) | Bookings. Scrollable container (`max-h-96 overflow-y-auto scrollbar-thin`) with a sticky `TableHeader`. Includes a TOTAL row at the bottom with `border-t-2 bg-muted/30`.
+   255→- **Revenue by Room Type table** — Room Type | Bookings | Gross Revenue | Platform Fee | Net Revenue. Sorted client-side by `grossRevenue` desc.
+   256→- **Revenue by Source table** — Source (Walk-in/Online/Phone/Agent via BOOKING_SOURCES lookup) | Bookings | Gross Revenue | Platform Fee.
+   257→- **Payments by Method table** — Method (with colored dot) | Count | Amount | % of total. Includes a TOTAL row at the bottom.
+   258→- **Outstanding Bookings table** (the molecular part) — Booking Code | Guest | Room | Check-In | Check-Out | Gross Amount | Platform Fee (rose) | Net Amount (emerald) | Collect button. "Collect" calls `useAppStore.getState().setQuickAction("payment")` to open the payment dialog.
+   259→- Loading skeletons (5 stat cards + summary card + table card) shown while `isLoading`.
+   260→- Empty states for every table when its array is empty.
+   261→- **NO charts anywhere** — no recharts import; only tables, StatCards, and a Progress bar.
+   262→
+   263→### 2. Rewrote `src/components/views/staff-view.tsx` with RBAC + Roles tab
+   264→Preserved all existing staff-management logic (stats row, role-distribution chips, staff table, audit-logs collapsible, add/edit dialog) and added a Tabs wrapper + a Roles & Permissions tab.
+   265→- PageHeader "Staff & Roles" with "Add Staff" button (existing).
+   266→- Stats row updated: Total Staff, Active, Total Roles (system+custom hint), Top Role.
+   267→- **Tabs** — "Staff Members" and "Roles & Permissions".
+   268→- **Staff Members tab** (preserved + enhanced):
+   269→  - Role distribution chips (existing).
+   270→  - Team Members table — kept Member / Role (StatusBadge via USER_ROLES) / Contact / Property / Status (Switch with optimistic toggle) / Last Login / Actions columns.
+   271→  - Added an **"Assign Role" DropdownMenu** in the Actions column — lists every role from `rolesApi.list()`, marks the currently-assigned one with a CheckCircle2 (matched by `r.name === u.role || r.label === u.role`), shows a Lock icon for system roles and ShieldCheck for custom, and calls `usersRbacApi.assignRole(userId, roleId)` on click. Invalidates `["staff"]`, `["roles"]`, `["audit"]` on success.
+   272→  - Audit Logs collapsible section preserved exactly as before.
+   273→- **Roles & Permissions tab** (NEW):
+   274→  - Role grid: each role rendered as a `RoleCard` showing label, name (mono), system badge (Lock icon), super badge (Crown icon), description, three stat tiles (Users / Perms / Menus), and two actions — Edit Permissions and Delete (delete disabled for system roles and roles with users assigned).
+   275→  - "Create Role" button opens a Dialog with: Role Name (mono input, disabled in edit mode), Display Label, Description, **Permission Matrix**, **Menu Items**.
+   276→  - **Permission Matrix** — iterates `Object.entries(PERMISSION_GROUPS)` to render each module as a bordered card with: module header, count badge (selected/total), "Select all / Clear all" button, and a grid of `Checkbox`+label+description+key for each permission in that module. `togglePermission(key, checked)` mutates the form's `Set<string>`. `toggleModule(module, checked)` bulk-toggles all permissions in a module.
+   277→  - **Menu Items assignment** — grid of `Checkbox`+label for each `NAV_ITEMS` entry. "Select all / Clear all" bulk-toggle.
+   278→  - Save: for create → `rolesApi.create({ name, label, description, permissionKeys, menuItems })`; for edit → `rolesApi.update(id, { label, description, permissionKeys, menuItems })`. Both invalidate `["roles"]` and `["audit"]`.
+   279→  - Edit dialog for **system roles** shows a read-only amber banner "System role — permissions are fixed", disables all inputs/checkboxes, and the save button (still allows viewing the permissions). The "Save Changes" button label is hidden by disabled state.
+   280→  - Delete confirmation via `AlertDialog` — refuses to delete system roles or roles with users assigned (button disabled; description explains why). The `AlertDialogAction` is rose-styled.
+   281→- **Permission Catalog reference card** at the bottom of Roles tab — shows all modules + permission keys grouped, giving admins an at-a-glance overview of the available molecular permissions.
+   282→
+   283→### Implementation notes
+   284→- All `Set<string>` state used for permissionKeys / menuItems (cleaner toggle semantics than arrays).
+   285→- Mutations invalidate `["staff"]`, `["roles"]`, `["audit"]` as appropriate so the UI re-fetches immediately.
+   286→- The Assign Role dropdown is disabled-friendly — uses `DropdownMenuItem` with `onClick` (not `onSelect`) so the menu closes cleanly after assignment.
+   287→- File starts with `"use client";` and imports only from existing shadcn/ui components + shared utilities — no new dependencies added.
+   288→- The router in `src/app/page.tsx` already pointed `case "reports"` to `<RevenueReportView />`, so this task completes that wiring without modifying page.tsx.
+   289→
+   290→### Verification
+   291→- `bun run lint` → exit code 0 (no errors, no warnings).
+   292→- Dev log shows `GET /api/reports/revenue?range=30d 200 in 20ms` — the molecular revenue API is being hit successfully and the new view is compiling cleanly.
+   293→- No `recharts` imports anywhere in either file (verified).
+   294→
+   295→---
+   296→Task ID: 8
+   297→Agent: Chart Remover
+   298→Task: Remove ALL charts (bar, pie, area, line, donut) from LodgeHub views
+   299→
+   300→Work Log:
+   301→- Read worklog.md to understand prior context (Tasks 5, 5b, 7). The `reports-view.tsx` is being REPLACED by `revenue-report-view.tsx` (another agent) — left it untouched as instructed.
+   302→- Inspected the 3 target view files and their recharts usage:
+   303→  - `dashboard-view.tsx` — AreaChart (Revenue vs Expenses 14-day trend), PieChart donut (Room Status), BarChart (Occupancy by Floor).
+   304→  - `expenses-view.tsx` — PieChart donut (Expense Distribution by Category).
+   305→  - `payments-view.tsx` — BarChart (Payment Method Distribution) + a legend tile grid below.
+   306→- Confirmed `src/components/ui/progress.tsx` is the shadcn Progress primitive (uses an internal Indicator with `bg-primary` + `data-slot="progress-indicator"`).
+   307→- Confirmed `scrollbar-thin` utility is defined globally in `src/app/globals.css` (used for the new scrollable table containers).
+   308→
+   309→### dashboard-view.tsx — 3 chart replacements
+   310→- Removed `recharts` import entirely.
+   311→- Added `Progress` from `@/components/ui/progress` and `Table` from `@/components/ui/table`; kept everything else.
+   312→- Added a `ROOM_STATUS_HEX` map + `statusHex()` helper that mirrors the prior `PIE_COLORS` array indexed by `ROOM_STATUS` order (emerald/rose/amber/sky/orange/zinc).
+   313→- Added a `PROGRESS_INDICATOR_CLASS` constant string: `"h-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--pc)]"` — a Tailwind v4 arbitrary-variant that targets the descendant Progress indicator's `data-slot` and overrides its `bg-primary` with `var(--pc)`. The actual per-row hex color is injected via `style={{ "--pc": hex }}` on the Progress component (CSS custom property).
+   314→- **Revenue vs Expenses AreaChart → TABLE**: A scrollable (`max-h-72 overflow-y-auto scrollbar-thin`) Table inside the existing `lg:col-span-2` Card showing Date | Revenue | Expenses | Net for the most recent 7 days of `stats.revenueTrend` (`slice(-7)`). Revenue cells are emerald, expenses are rose, net is colored by sign. The Card header (title + "Last 14 days" subtitle + Revenue/Expenses legend dots) is preserved. Empty state row when `revenueTrendRecent.length === 0`.
+   315→- **Room Status donut → TILES WITH PROGRESS**: Replaced the PieChart with a vertical stack of status tiles. For each `roomStatusBreakdown` entry where `value > 0`, shows a colored dot + label + count + percentage of total + a thin `<Progress>` bar (`PROGRESS_INDICATOR_CLASS` + `style={{ --pc: hex }}`) showing the proportion. Percentage computed against `totalRoomsTracked` (sum of non-zero statuses).
+   316→- **Occupancy by Floor BarChart → TABLE**: Replaced the horizontal BarChart with a compact Table: Floor | Total | Occ. | Avail. | %. Available is `total - occupied` (clamped at 0). Occupancy % text is colored emerald (<50%), amber (50–80%), rose (>80%) using `cn()` per-row. Hover row highlighting preserved.
+   317→- All stat cards (primary + secondary), arrivals/departures lists, recent bookings list, header actions (New Booking / Front Desk buttons), loading skeleton, and 30s refetch interval kept intact.
+   318→
+   319→### expenses-view.tsx — 1 chart replacement
+   320→- Removed the `recharts` import entirely (`Cell, Pie, PieChart, ResponsiveContainer, Tooltip`).
+   321→- Added `Progress` import. Re-used existing `Table` import. Kept all other imports.
+   322→- Updated the `byCategory` computation in the `stats` useMemo to also include a `count` per category (matching expenses count) — exposed for the new breakdown table.
+   323→- **PieChart donut → BREAKDOWN TABLE**: A scrollable Table inside the existing "Expense Distribution" Card. Columns: Category | Count | Amount | % of Total. Each row has a colored dot (uses the existing `categoryHex()` helper), the category label, a thin `<Progress>` bar (`h-1 mt-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--pc)]` with `style={{ --pc: hex }}`) showing the % of total, the count, the formatted amount, and the percentage. Rows sorted by amount desc. Empty state preserved when `chartData.length === 0`.
+   324→- The "Top Categories" progress-bar card (above the pie chart) is unchanged — those were already shadcn-style div bars, not charts.
+   325→- All filters (range ToggleGroup, category Select), stat cards, expense table, Add Expense Dialog, and Delete confirmation AlertDialog kept intact.
+   326→
+   327→### payments-view.tsx — 1 chart replacement
+   328→- Removed the `recharts` import entirely (`Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis`).
+   329→- Added `Progress` import. Kept existing `Table` import.
+   330→- **BarChart + legend tile grid → BREAKDOWN TABLE**: Replaced with a compact Table: Method | Count | Total Amount | % of Total. Each row has a colored dot (`METHOD_HEX`), the method's lucide icon (`METHOD_ICON`), the label, a thin `<Progress>` bar (`h-1 mt-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--pc)]` with `style={{ --pc: hex }}`), the count, the formatted amount (emerald), and the percentage. Empty state preserved when `payments.length === 0`.
+   331→- All stats (Total Collected, Today's Collection, Cash+UPI, Outstanding), range ToggleGroup, Record Payment button, Transactions tab (with filters + table), Invoices tab (with cards + printable invoice Dialog) kept intact.
+   332→
+   333→### Verification
+   334→- `bun run lint` → exit code 0 (no errors, no warnings). Only the pre-existing `prisma/seed.ts:1` eslint-disable directive warning was mentioned in earlier logs; not in scope here.
+   335→- `bunx tsc --noEmit --skipLibCheck` — zero errors in any of the 3 modified files (verified by grepping output for `views/dashboard-view.tsx`, `views/expenses-view.tsx`, `views/payments-view.tsx`). The only outstanding TS errors are pre-existing or owned by other agents (`auth/me/route.ts`, `examples/*`, `skills/*`, plus `page.tsx` referencing views that other agents are still building: `platform-dashboard-view`, `tenants-view`, `platform-fees-view`, `platform-plans-view`, `platform-audit-view`).
+   336→- `rg "recharts"` across `src/` → only matches in `src/components/ui/chart.tsx` (the shadcn primitive we were told NOT to touch) and `src/components/views/reports-view.tsx` (which we were told to leave alone since another agent is replacing it with `revenue-report-view.tsx`). Confirmed zero `recharts` imports in the 3 in-scope view files.
+   337→- Hit `/` to trigger Next.js dev compilation — page returns HTTP 500 only because page.tsx imports views owned by other agents (platform-dashboard-view, tenants-view, etc.) that have not been created yet. Once those agents ship, the page will compile cleanly; my 3 view files import only from `@/components/ui/*`, `@/components/shared/*`, `@/lib/*`, `lucide-react`, `@tanstack/react-query`, `date-fns`, and `sonner` — all of which already exist.
+   338→
+   339→Stage Summary:
+   340→- 3 view files de-charted: `dashboard-view.tsx`, `expenses-view.tsx`, `payments-view.tsx`.
+   341→- 4 chart instances removed: 1 AreaChart + 1 PieChart + 1 BarChart (dashboard), 1 PieChart donut (expenses), 1 BarChart (payments).
+   342→- Replacements: 3 Tables (revenue trend, occupancy-by-floor, payment-method-breakdown), 1 status-tile grid with Progress bars (room status), 2 in-row Progress bars (expense category breakdown + payment-method breakdown rows).
+   343→- `recharts` import removed from all 3 files; only `chart.tsx` (shadcn primitive, untouched) and `reports-view.tsx` (untouched, being replaced by another agent) still reference recharts in the codebase.
+   344→- All existing functionality preserved: filters, TanStack Query hooks, mutations, dialogs, AlertDialogs, range toggles, status badges, loading/empty states, hospitality emerald theme, mobile responsiveness, touch targets.
+   345→- Lint clean (exit 0). TypeScript clean for all 3 modified files.
+   346→

@@ -86,9 +86,17 @@ export const NAV_ITEMS = [
   { key: "housekeeping", label: "Housekeeping", icon: "Sparkles" },
   { key: "payments", label: "Payments", icon: "ReceiptIndianRupee" },
   { key: "expenses", label: "Expenses", icon: "Wallet" },
-  { key: "reports", label: "Reports", icon: "BarChart3" },
+  { key: "reports", label: "Reports", icon: "Table2" },
   { key: "staff", label: "Staff", icon: "IdCard" },
   { key: "settings", label: "Settings", icon: "Settings" },
+] as const;
+
+export const SUPER_ADMIN_NAV = [
+  { key: "platform_dashboard", label: "Platform Overview", icon: "ShieldCheck" },
+  { key: "tenants", label: "Tenants", icon: "Building2" },
+  { key: "platform_fees", label: "Platform Fees", icon: "Percent" },
+  { key: "platform_plans", label: "Subscription Plans", icon: "Crown" },
+  { key: "platform_audit", label: "Audit Logs", icon: "ScrollText" },
 ] as const;
 
 export const AMENITY_OPTIONS = [
@@ -176,8 +184,10 @@ export const formatCurrency = (amount: number, currency = "INR") => {
   })}`;
 };
 
-export const formatDate = (date: Date | string, withTime = false) => {
+export const formatDate = (date: Date | string | null | undefined, withTime = false) => {
+  if (date === null || date === undefined || date === "") return "—";
   const d = typeof date === "string" ? new Date(date) : date;
+  if (isNaN(d.getTime())) return "—";
   if (withTime) {
     return d.toLocaleString("en-IN", {
       day: "2-digit",

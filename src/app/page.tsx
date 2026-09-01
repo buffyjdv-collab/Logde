@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "@/lib/store";
 import { QueryProvider } from "@/components/query-provider";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -21,6 +21,12 @@ import { ExpensesView } from "@/components/views/expenses-view";
 import { ReportsView } from "@/components/views/reports-view";
 import { StaffView } from "@/components/views/staff-view";
 import { SettingsView } from "@/components/views/settings-view";
+import { PlatformDashboardView } from "@/components/views/platform-dashboard-view";
+import { TenantsView } from "@/components/views/tenants-view";
+import { PlatformFeesView } from "@/components/views/platform-fees-view";
+import { PlatformPlansView } from "@/components/views/platform-plans-view";
+import { PlatformAuditView } from "@/components/views/platform-audit-view";
+import { RevenueReportView } from "@/components/views/revenue-report-view";
 
 function QuickActions() {
   const quickAction = useAppStore((s) => s.quickAction);
@@ -67,20 +73,78 @@ function ActiveView() {
     case "expenses":
       return <ExpensesView />;
     case "reports":
-      return <ReportsView />;
+      return <RevenueReportView />;
     case "staff":
       return <StaffView />;
     case "settings":
       return <SettingsView />;
+    // Super Admin views
+    case "platform_dashboard":
+      return <PlatformDashboardView />;
+    case "tenants":
+      return <TenantsView />;
+    case "platform_fees":
+      return <PlatformFeesView />;
+    case "platform_plans":
+      return <PlatformPlansView />;
+    case "platform_audit":
+      return <PlatformAuditView />;
     default:
       return <DashboardView />;
   }
 }
 
+function UserLoader() {
+  const setUser = useAppStore((s) => s.setUser);
+  const setTenant = useAppStore((s) => s.setTenant);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me");
+        if (!res.ok) return;
+        const data = await res.json();
+        setUser({
+          id: data.id,
+          name: data.name,
+          email: data.email,
+          role: data.role,
+          roleId: data.roleId,
+          avatar: data.avatar,
+          isSuperAdmin: data.isSuperAdmin,
+          permissions: data.permissions || [],
+          menuItems: data.menuItems || [],
+        });
+        if (data.tenant) {
+          setTenant(data.tenant.id, data.tenant.name);
+        }
+      } catch {
+        // ignore — demo fallback
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [setUser, setTenant]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">Loading LodgeHub…</p>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function Home() {
   const setView = useAppStore((s) => s.setView);
+  const isSuperAdmin = useAppStore((s) => s.currentUser?.isSuperAdmin);
 
-  // Sync view with URL hash for shareable state
+  // Sync view with URL hash
   useEffect(() => {
     const hash = window.location.hash.replace("#", "");
     if (hash) setView(hash as any);
@@ -92,15 +156,21 @@ export default function Home() {
     return () => window.removeEventListener("hashchange", handler);
   }, [setView]);
 
+  // Super admin should land on platform dashboard by default
+  useEffect(() => {
+    if (isSuperAdmin) {
+      const hash = window.location.hash.replace("#", "");
+      if (!hash) setView("platform_dashboard");
+    }
+  }, [isSuperAdmin, setView]);
+
   return (
     <QueryProvider>
+      <UserLoader />
       <div className="flex min-h-screen bg-background">
-        {/* Desktop sidebar */}
         <aside className="hidden lg:flex w-64 shrink-0 border-r border-sidebar-border">
           <Sidebar />
         </aside>
-
-        {/* Main content */}
         <div className="flex flex-1 flex-col min-w-0">
           <Header />
           <main className="flex-1 overflow-x-hidden pb-20 lg:pb-6">
@@ -109,11 +179,7 @@ export default function Home() {
             </div>
           </main>
         </div>
-
-        {/* Mobile bottom nav */}
         <MobileNav />
-
-        {/* Quick action dialogs */}
         <QuickActions />
       </div>
     </QueryProvider>
