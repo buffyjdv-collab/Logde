@@ -3,14 +3,14 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
+    "dev": "env -u DATABASE_URL -u DIRECT_URL next dev -p 3000 2>&1 | tee dev.log",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
-    "db:push": "prisma db push --accept-data-loss",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:push": "env -u DATABASE_URL -u DIRECT_URL prisma db push --accept-data-loss",
+    "db:generate": "env -u DATABASE_URL -u DIRECT_URL prisma generate",
+    "db:migrate": "env -u DATABASE_URL -u DIRECT_URL prisma migrate dev",
+    "db:reset": "env -u DATABASE_URL -u DIRECT_URL prisma migrate reset"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -55,6 +55,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.4.2",
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^12.23.2",
     "input-otp": "^1.4.2",

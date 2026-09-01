@@ -56,5 +56,9 @@ server.log
 *.db
 *.db-journal
 db/*.db
+
+# Runtime DB config (contains credentials, not committed)
+src/lib/db-config.ts
+
 # Skills directory
 /skills/

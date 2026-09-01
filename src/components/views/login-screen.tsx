@@ -6,7 +6,6 @@ import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
 import {
   Hotel,
   ShieldCheck,
@@ -15,32 +14,48 @@ import {
   Eye,
   EyeOff,
   Building2,
+  Users,
+  User,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 
-const DEMO_ACCOUNTS = [
+const DEMO_CATEGORIES = [
   {
-    role: "Super Admin",
-    email: "superadmin@lodgehub.app",
-    desc: "Platform-wide control",
+    label: "Admin",
     icon: ShieldCheck,
     color: "rose",
+    accounts: [
+      { role: "Super Admin", email: "superadmin@lodgehub.app", desc: "Platform-wide control" },
+      { role: "Lodge Owner", email: "owner@pinevalley.in", desc: "Full lodge access" },
+      { role: "Manager", email: "manager@pinevalley.in", desc: "Operations & staff" },
+    ],
   },
   {
-    role: "Lodge Owner",
-    email: "owner@pinevalley.in",
-    desc: "Full lodge access",
-    icon: Building2,
+    label: "Staff",
+    icon: Users,
     color: "emerald",
+    accounts: [
+      { role: "Receptionist", email: "reception@pinevalley.in", desc: "Bookings & front desk" },
+      { role: "Housekeeping", email: "housekeeping@pinevalley.in", desc: "Room cleaning" },
+      { role: "Accountant", email: "accounts@pinevalley.in", desc: "Payments & reports" },
+    ],
   },
   {
-    role: "Receptionist",
-    email: "reception@pinevalley.in",
-    desc: "Bookings & front desk",
-    icon: Hotel,
+    label: "Guest / User",
+    icon: User,
     color: "amber",
+    accounts: [
+      { role: "Lodge Guest", email: "guest@pinevalley.in", desc: "View bookings & invoices" },
+    ],
   },
 ];
+
+const COLOR_MAP: Record<string, string> = {
+  rose: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+  emerald: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+  amber: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+};
 
 export function LoginScreen() {
   const setUser = useAppStore((s) => s.setUser);
@@ -52,12 +67,11 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doLogin = async (loginEmail: string, loginPassword: string) => {
     setLoading(true);
     setError(null);
     try {
-      const user = await authApi.login(email, password);
+      const user = await authApi.login(loginEmail, loginPassword);
       setUser({
         id: user.id,
         name: user.name,
@@ -73,11 +87,7 @@ export function LoginScreen() {
         setTenant(user.tenant.id, user.tenant.name);
       }
       toast.success(`Welcome back, ${user.name}!`);
-      if (user.isSuperAdmin) {
-        setView("platform_dashboard");
-      } else {
-        setView("dashboard");
-      }
+      setView(user.isSuperAdmin ? "platform_dashboard" : "dashboard");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -85,38 +95,15 @@ export function LoginScreen() {
     }
   };
 
-  const quickLogin = async (demoEmail: string) => {
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    doLogin(email, password);
+  };
+
+  const quickLogin = (demoEmail: string) => {
     setEmail(demoEmail);
     setPassword("lodgehub123");
-    setLoading(true);
-    setError(null);
-    try {
-      const user = await authApi.login(demoEmail, "lodgehub123");
-      setUser({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role as any,
-        roleId: user.roleId || undefined,
-        avatar: user.avatar,
-        isSuperAdmin: user.isSuperAdmin,
-        permissions: user.permissions,
-        menuItems: user.menuItems,
-      });
-      if (user.tenant) {
-        setTenant(user.tenant.id, user.tenant.name);
-      }
-      toast.success(`Welcome back, ${user.name}!`);
-      if (user.isSuperAdmin) {
-        setView("platform_dashboard");
-      } else {
-        setView("dashboard");
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    doLogin(demoEmail, "lodgehub123");
   };
 
   return (
@@ -249,38 +236,49 @@ export function LoginScreen() {
             </Button>
           </form>
 
-          {/* Demo accounts */}
+          {/* Demo accounts — grouped by category */}
           <div className="pt-4 border-t">
             <p className="text-xs font-medium text-muted-foreground mb-3 text-center">
-              Quick demo login (password: <code className="font-mono bg-muted px-1 py-0.5 rounded">lodgehub123</code>)
+              Quick demo login (password:{" "}
+              <code className="font-mono bg-muted px-1 py-0.5 rounded">
+                lodgehub123
+              </code>
+              )
             </p>
-            <div className="grid gap-2">
-              {DEMO_ACCOUNTS.map((acc) => {
-                const Icon = acc.icon;
-                const colorMap: Record<string, string> = {
-                  rose: "bg-rose-500/10 text-rose-600 border-rose-500/20",
-                  emerald: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-                  amber: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-                };
+            <div className="space-y-4">
+              {DEMO_CATEGORIES.map((cat) => {
+                const CatIcon = cat.icon;
                 return (
-                  <button
-                    key={acc.email}
-                    onClick={() => quickLogin(acc.email)}
-                    disabled={loading}
-                    className="flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:shadow-sm hover:border-primary/40 disabled:opacity-50"
-                  >
-                    <div
-                      className={`flex h-9 w-9 items-center justify-center rounded-lg border ${colorMap[acc.color]}`}
-                    >
-                      <Icon className="h-4 w-4" />
+                  <div key={cat.label}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div
+                        className={`flex h-6 w-6 items-center justify-center rounded-md border ${COLOR_MAP[cat.color]}`}
+                      >
+                        <CatIcon className="h-3.5 w-3.5" />
+                      </div>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        {cat.label}
+                      </span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{acc.role}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {acc.email} · {acc.desc}
-                      </p>
+                    <div className="grid gap-1.5">
+                      {cat.accounts.map((acc) => (
+                        <button
+                          key={acc.email}
+                          onClick={() => quickLogin(acc.email)}
+                          disabled={loading}
+                          className="group flex items-center gap-3 rounded-lg border p-2.5 text-left transition-all hover:shadow-sm hover:border-primary/40 disabled:opacity-50"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">{acc.role}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {acc.email}
+                            </p>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                        </button>
+                      ))}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
