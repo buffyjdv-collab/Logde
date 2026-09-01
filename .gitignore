@@ -51,5 +51,10 @@ test
 prompt
 
 server.log
+
+# database files (use Neon PostgreSQL, not local SQLite)
+*.db
+*.db-journal
+db/*.db
 # Skills directory
 /skills/
