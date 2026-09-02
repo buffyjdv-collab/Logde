@@ -11,11 +11,18 @@ import {
   Plus,
   Search,
   Eye,
+  EyeOff,
   Pencil,
   Pause,
   PlayCircle,
   Mail,
   Phone,
+  KeyRound,
+  UserCircle,
+  Copy,
+  Check,
+  Lock,
+  RefreshCw,
 } from "lucide-react";
 
 import { PageHeader } from "@/components/shared/page-header";
@@ -27,7 +34,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -99,6 +105,33 @@ const FEE_TYPE_OPTIONS = [
   { value: "per_booking", label: "Per Booking (₹/booking)" },
 ];
 
+type OwnerCredentials = {
+  ownerName: string;
+  email: string;
+  password: string;
+  userId: string;
+  loginUrl: string;
+};
+
+type CredentialsResult = {
+  title: string;
+  tenantName: string;
+  credentials: OwnerCredentials;
+};
+
+function generatePassword(length = 8): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const arr = new Uint32Array(length);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(arr);
+  } else {
+    for (let i = 0; i < length; i++) arr[i] = Math.floor(Math.random() * 0xffffffff);
+  }
+  let out = "";
+  for (let i = 0; i < length; i++) out += chars[arr[i] % chars.length];
+  return out;
+}
+
 function PlanBadge({ plan }: { plan: string }) {
   const cfg = PLAN_BADGE[plan] ?? { label: plan, color: "zinc" };
   const color = BADGE_COLOR[cfg.color] ?? BADGE_COLOR.zinc;
@@ -112,6 +145,143 @@ function PlanBadge({ plan }: { plan: string }) {
   );
 }
 
+/**
+ * Reusable credentials display: prominent emerald-bordered box with the
+ * owner login URL / email / password, a per-field copy button, a
+ * "Copy credentials" button (copies all three), and a show/hide toggle
+ * on the password. Used both after tenant creation and after password reset.
+ */
+function CredentialsDisplay({ credentials }: { credentials: OwnerCredentials }) {
+  const [show, setShow] = useState(false);
+  const [copied, setCopied] = useState<"email" | "password" | "all" | null>(null);
+
+  const copy = (text: string, kind: "email" | "password" | "all") => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.clipboard ||
+      !navigator.clipboard.writeText
+    ) {
+      toast.error("Clipboard not available in this browser");
+      return;
+    }
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(kind);
+        toast.success("Credentials copied to clipboard");
+        setTimeout(() => setCopied(null), 2000);
+      })
+      .catch(() => toast.error("Failed to copy"));
+  };
+
+  const copyAll = () => {
+    const text = [
+      `Login URL: ${credentials.loginUrl}`,
+      `Email: ${credentials.email}`,
+      `Password: ${credentials.password}`,
+    ].join("\n");
+    copy(text, "all");
+  };
+
+  return (
+    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+          <Lock className="h-3.5 w-3.5" /> Owner Login Credentials
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={copyAll}
+          className="h-7 text-xs"
+        >
+          {copied === "all" ? (
+            <Check className="h-3 w-3 mr-1" />
+          ) : (
+            <Copy className="h-3 w-3 mr-1" />
+          )}
+          Copy credentials
+        </Button>
+      </div>
+      <div className="space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5" /> Login URL
+          </span>
+          <code className="text-xs font-mono bg-emerald-500/10 px-2 py-0.5 rounded">
+            {credentials.loginUrl}
+          </code>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5" /> Email
+          </span>
+          <div className="flex items-center gap-1.5">
+            <code className="text-xs font-mono bg-emerald-500/10 px-2 py-0.5 rounded">
+              {credentials.email}
+            </code>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              onClick={() => copy(credentials.email, "email")}
+              aria-label="Copy email"
+            >
+              {copied === "email" ? (
+                <Check className="h-3 w-3 text-emerald-600" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Lock className="h-3.5 w-3.5" /> Password
+          </span>
+          <div className="flex items-center gap-1.5">
+            <code className="text-xs font-mono bg-emerald-500/10 px-2 py-0.5 rounded">
+              {show
+                ? credentials.password
+                : "•".repeat(Math.max(credentials.password.length, 6))}
+            </code>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              onClick={() => setShow((s) => !s)}
+              aria-label={show ? "Hide password" : "Show password"}
+            >
+              {show ? (
+                <EyeOff className="h-3 w-3" />
+              ) : (
+                <Eye className="h-3 w-3" />
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              onClick={() => copy(credentials.password, "password")}
+              aria-label="Copy password"
+            >
+              {copied === "password" ? (
+                <Check className="h-3 w-3 text-emerald-600" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface TenantFormState {
   name: string;
   contactEmail: string;
@@ -121,6 +291,9 @@ interface TenantFormState {
   feeType: string;
   feeValue: string;
   status: string;
+  ownerName: string;
+  ownerEmail: string;
+  password: string;
 }
 
 const EMPTY_FORM: TenantFormState = {
@@ -132,6 +305,9 @@ const EMPTY_FORM: TenantFormState = {
   feeType: "percentage",
   feeValue: "5",
   status: "active",
+  ownerName: "",
+  ownerEmail: "",
+  password: "",
 };
 
 export function TenantsView() {
@@ -142,11 +318,22 @@ export function TenantsView() {
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [viewing, setViewing] = useState<Tenant | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<Tenant | null>(null);
+  const [resetTarget, setResetTarget] = useState<Tenant | null>(null);
+  const [ownerInfoTarget, setOwnerInfoTarget] = useState<Tenant | null>(null);
+  const [credentialsResult, setCredentialsResult] =
+    useState<CredentialsResult | null>(null);
   const [form, setForm] = useState<TenantFormState>(EMPTY_FORM);
 
   const { data: tenants = [], isLoading } = useQuery<Tenant[]>({
     queryKey: ["tenants"],
     queryFn: tenantsApi.list,
+  });
+
+  // Fetch tenant+owner details when the Owner Info dialog opens.
+  const { data: ownerData, isLoading: ownerLoading } = useQuery({
+    queryKey: ["tenant-owner", ownerInfoTarget?.id],
+    queryFn: () => tenantsApi.get(ownerInfoTarget!.id),
+    enabled: !!ownerInfoTarget,
   });
 
   const filtered = useMemo(() => {
@@ -189,13 +376,21 @@ export function TenantsView() {
       plan?: string;
       feeType?: string;
       feeValue?: number;
+      ownerName?: string;
+      ownerEmail?: string;
+      password?: string;
     }) => tenantsApi.create(data),
-    onSuccess: () => {
-      toast.success("Tenant created");
+    onSuccess: (data) => {
+      toast.success("Tenant created successfully");
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       queryClient.invalidateQueries({ queryKey: ["super-dashboard"] });
       setCreateOpen(false);
       setForm(EMPTY_FORM);
+      setCredentialsResult({
+        title: "Tenant created successfully!",
+        tenantName: data.name,
+        credentials: data.credentials,
+      });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -218,13 +413,37 @@ export function TenantsView() {
       tenantsApi.update(id, { status } as Partial<Tenant>),
     onSuccess: (_data, vars) => {
       toast.success(
-        vars.status === "suspended"
-          ? "Tenant suspended"
-          : "Tenant reactivated"
+        vars.status === "suspended" ? "Tenant suspended" : "Tenant reactivated"
       );
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       queryClient.invalidateQueries({ queryKey: ["super-dashboard"] });
       setSuspendTarget(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: (id: string) => tenantsApi.resetPassword(id),
+    onSuccess: (data, tenantId) => {
+      toast.success("Owner password reset");
+      queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      queryClient.invalidateQueries({ queryKey: ["super-dashboard"] });
+      queryClient.invalidateQueries({
+        queryKey: ["tenant-owner", tenantId],
+      });
+      setResetTarget(null);
+      const tenant = tenants.find((t) => t.id === tenantId);
+      setCredentialsResult({
+        title: "Owner password reset successfully!",
+        tenantName: tenant?.name ?? data.ownerName,
+        credentials: {
+          ownerName: data.ownerName,
+          email: data.email,
+          password: data.password,
+          userId: "",
+          loginUrl: "/",
+        },
+      });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -244,6 +463,9 @@ export function TenantsView() {
       feeType: "percentage",
       feeValue: "5",
       status: t.status,
+      ownerName: "",
+      ownerEmail: "",
+      password: "",
     });
     setEditing(t);
   };
@@ -280,6 +502,9 @@ export function TenantsView() {
         plan: form.plan,
         feeType: form.feeType,
         feeValue: feeVal,
+        ownerName: form.ownerName.trim() || undefined,
+        ownerEmail: form.ownerEmail.trim() || undefined,
+        password: form.password.trim() || undefined,
       });
     }
   };
@@ -427,13 +652,20 @@ export function TenantsView() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => setViewing(t)}
-                          >
+                          <DropdownMenuItem onClick={() => setViewing(t)}>
                             <Eye className="h-4 w-4 mr-2" /> View
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openEdit(t)}>
                             <Pencil className="h-4 w-4 mr-2" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setOwnerInfoTarget(t)}
+                          >
+                            <UserCircle className="h-4 w-4 mr-2" /> Owner Info
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setResetTarget(t)}>
+                            <KeyRound className="h-4 w-4 mr-2" /> Reset Owner
+                            Password
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {t.status === "active" ? (
@@ -468,13 +700,16 @@ export function TenantsView() {
       </Card>
 
       {/* Create / Edit Dialog */}
-      <Dialog open={createOpen || !!editing} onOpenChange={(v) => {
-        if (!v) {
-          setCreateOpen(false);
-          setEditing(null);
-          setForm(EMPTY_FORM);
-        }
-      }}>
+      <Dialog
+        open={createOpen || !!editing}
+        onOpenChange={(v) => {
+          if (!v) {
+            setCreateOpen(false);
+            setEditing(null);
+            setForm(EMPTY_FORM);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin">
           <DialogHeader>
             <DialogTitle>
@@ -483,7 +718,7 @@ export function TenantsView() {
             <DialogDescription>
               {editing
                 ? "Update tenant details and platform fee configuration."
-                : "Add a new tenant to the platform. A default fee config will be created."}
+                : "Add a new tenant to the platform. An owner login will be created automatically."}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -617,6 +852,70 @@ export function TenantsView() {
                 </div>
               </div>
             )}
+            {!editing && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Lock className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                    Owner Login Credentials
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground -mt-1">
+                  An owner account is created automatically. Leave fields blank
+                  to use the tenant name and contact email; leave the password
+                  blank to auto-generate an 8-character one.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="t-owner-name">Owner Name</Label>
+                    <Input
+                      id="t-owner-name"
+                      value={form.ownerName}
+                      onChange={(e) =>
+                        setForm({ ...form, ownerName: e.target.value })
+                      }
+                      placeholder="Owner's full name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="t-owner-email">Owner Email</Label>
+                    <Input
+                      id="t-owner-email"
+                      type="email"
+                      value={form.ownerEmail}
+                      onChange={(e) =>
+                        setForm({ ...form, ownerEmail: e.target.value })
+                      }
+                      placeholder="owner@lodge.com"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="t-owner-password">Password</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="t-owner-password"
+                      value={form.password}
+                      onChange={(e) =>
+                        setForm({ ...form, password: e.target.value })
+                      }
+                      placeholder="Leave blank to auto-generate"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setForm({ ...form, password: generatePassword(8) })
+                      }
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Auto-generate
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             <DialogFooter>
               <Button
                 type="button"
@@ -643,6 +942,141 @@ export function TenantsView() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Credentials Success Dialog (reused for create + reset password) */}
+      <Dialog
+        open={!!credentialsResult}
+        onOpenChange={(v) => !v && setCredentialsResult(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              {credentialsResult?.title ?? "Success"}
+            </DialogTitle>
+            <DialogDescription>
+              Share these credentials securely with the tenant owner.
+            </DialogDescription>
+          </DialogHeader>
+          {credentialsResult && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Tenant</p>
+                <p className="font-medium text-sm">
+                  {credentialsResult.tenantName}
+                </p>
+              </div>
+              <CredentialsDisplay credentials={credentialsResult.credentials} />
+              <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+                <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>
+                  Share these credentials securely with the tenant owner. The
+                  password will not be shown again.
+                </span>
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setCredentialsResult(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Owner Info Dialog */}
+      <Dialog
+        open={!!ownerInfoTarget}
+        onOpenChange={(v) => !v && setOwnerInfoTarget(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCircle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+              Owner Info
+            </DialogTitle>
+            <DialogDescription>
+              Owner account details for {ownerInfoTarget?.name}
+            </DialogDescription>
+          </DialogHeader>
+          {ownerLoading ? (
+            <div className="space-y-2 py-2">
+              <div className="h-4 bg-muted rounded animate-pulse" />
+              <div className="h-4 bg-muted rounded animate-pulse w-3/4" />
+              <div className="h-4 bg-muted rounded animate-pulse w-1/2" />
+            </div>
+          ) : ownerData?.owner ? (
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-600 dark:text-emerald-400">
+                  <UserCircle className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="font-semibold text-base">
+                    {ownerData.owner.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Owner account
+                  </p>
+                </div>
+              </div>
+              <DetailRow label="Name">{ownerData.owner.name}</DetailRow>
+              <DetailRow label="Email">
+                <span className="flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+                  {ownerData.owner.email}
+                </span>
+              </DetailRow>
+              {ownerData.owner.phone && (
+                <DetailRow label="Phone">
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                    {ownerData.owner.phone}
+                  </span>
+                </DetailRow>
+              )}
+              <DetailRow label="Status">
+                {ownerData.owner.active ? (
+                  <Badge className="bg-emerald-100 text-emerald-700 border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-400">
+                    Active
+                  </Badge>
+                ) : (
+                  <Badge className="bg-rose-100 text-rose-700 border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-400">
+                    Inactive
+                  </Badge>
+                )}
+              </DetailRow>
+              <DetailRow label="Last Login">
+                {ownerData.owner.lastLogin
+                  ? formatDate(ownerData.owner.lastLogin)
+                  : "Never"}
+              </DetailRow>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-400 flex items-start gap-2">
+              <UserCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                No owner account is linked to this tenant. Use{" "}
+                <strong>Reset Owner Password</strong> to provision one.
+              </span>
+            </div>
+          )}
+          <DialogFooter>
+            <div className="flex items-center justify-between w-full gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (ownerInfoTarget) {
+                    setResetTarget(ownerInfoTarget);
+                    setOwnerInfoTarget(null);
+                  }
+                }}
+              >
+                <KeyRound className="h-4 w-4" /> Reset Password
+              </Button>
+              <Button onClick={() => setOwnerInfoTarget(null)}>Close</Button>
+            </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -731,6 +1165,39 @@ export function TenantsView() {
               }}
             >
               Suspend Tenant
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset Owner Password confirm */}
+      <AlertDialog
+        open={!!resetTarget}
+        onOpenChange={(v) => !v && setResetTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset owner password?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {resetTarget?.name}&apos;s owner account will receive a new
+              auto-generated password. The previous password will no longer
+              work. The new credentials will be shown to you once the reset is
+              complete.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 hover:bg-rose-700 text-white"
+              disabled={resetPasswordMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (resetTarget) {
+                  resetPasswordMutation.mutate(resetTarget.id);
+                }
+              }}
+            >
+              {resetPasswordMutation.isPending ? "Resetting…" : "Reset Password"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

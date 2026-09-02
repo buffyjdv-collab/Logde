@@ -55,12 +55,13 @@ export async function GET() {
 
 /**
  * POST /api/super/tenants
- * Body: { name, contactEmail, contactPhone?, address?, plan?, feeType?, feeValue? }
+ * Body: { name, contactEmail, contactPhone?, address?, plan?, feeType?, feeValue?, ownerName?, ownerEmail?, password? }
  * Onboards a new tenant:
  * 1. Create tenant with unique slug (slugified name + random suffix).
  * 2. Create a default owner role with DEFAULT_ROLE_PERMISSIONS.owner.
- * 3. Create a PlatformFeeConfig (default feeType=percentage, feeValue=5).
- * Returns the tenant. Audit log entry written for the action.
+ * 3. Create the owner user (login credentials) so the tenant can log in.
+ * 4. Create a PlatformFeeConfig (default feeType=percentage, feeValue=5).
+ * Returns the tenant + the owner login credentials. Audit log entry written.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -77,6 +78,9 @@ export async function POST(req: NextRequest) {
       plan,
       feeType,
       feeValue,
+      ownerName,
+      ownerEmail,
+      password,
     } = body as {
       name?: string;
       contactEmail?: string;
@@ -85,10 +89,33 @@ export async function POST(req: NextRequest) {
       plan?: string;
       feeType?: string;
       feeValue?: number;
+      ownerName?: string;
+      ownerEmail?: string;
+      password?: string;
     };
 
     if (!name || !contactEmail) {
       return error("name and contactEmail are required", 400);
+    }
+
+    // Owner credentials default to the tenant's contact info.
+    const finalOwnerName = ownerName?.trim() || name;
+    const finalOwnerEmail = (ownerEmail?.trim() || contactEmail).toLowerCase();
+    // Auto-generate a password if none provided (8-char alphanumeric).
+    const finalPassword =
+      password && password.length >= 6
+        ? password
+        : Math.random().toString(36).slice(2, 10);
+
+    // Make sure the owner email isn't already taken by another user.
+    const existing = await db.user.findFirst({
+      where: { email: finalOwnerEmail },
+    });
+    if (existing) {
+      return error(
+        `A user with email "${finalOwnerEmail}" already exists. Use a different email.`,
+        409
+      );
     }
 
     // Build a unique slug.
@@ -145,6 +172,23 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Create the owner user with login credentials.
+    const bcrypt = await import("bcryptjs");
+    const passwordHash = bcrypt.hashSync(finalPassword, 10);
+    const ownerUser = await db.user.create({
+      data: {
+        tenantId: tenant.id,
+        name: finalOwnerName,
+        email: finalOwnerEmail,
+        password: passwordHash,
+        role: "owner",
+        roleId: ownerRole.id,
+        phone: contactPhone ?? null,
+        active: true,
+        lastLogin: null,
+      },
+    });
+
     // Create the platform fee config for this tenant.
     const feeConfig = await db.platformFeeConfig.create({
       data: {
@@ -163,7 +207,7 @@ export async function POST(req: NextRequest) {
         action: "create",
         entity: "tenant",
         entityId: tenant.id,
-        details: `Onboarded tenant "${tenant.name}" (${tenant.plan} plan)`,
+        details: `Onboarded tenant "${tenant.name}" (${tenant.plan} plan) with owner ${finalOwnerEmail}`,
       },
     });
 
@@ -172,6 +216,15 @@ export async function POST(req: NextRequest) {
         ...formatTenant(tenant),
         platformFeeConfig: feeConfig,
         ownerRoleId: ownerRole.id,
+        // Login credentials returned ONCE so the Super Admin can share them
+        // with the tenant owner. The password is NOT stored in plaintext.
+        credentials: {
+          ownerName: finalOwnerName,
+          email: finalOwnerEmail,
+          password: finalPassword,
+          userId: ownerUser.id,
+          loginUrl: "/",
+        },
       },
       201
     );

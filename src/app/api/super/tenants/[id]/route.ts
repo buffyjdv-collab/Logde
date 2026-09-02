@@ -32,6 +32,11 @@ export async function GET(
         platformFeeConfig: true,
         subscription: { include: { plan: true } },
         _count: { select: { users: true, bookings: true, rooms: true } },
+        users: {
+          where: { role: "owner" },
+          select: { id: true, name: true, email: true, phone: true, active: true, lastLogin: true },
+          take: 1,
+        },
       },
     });
     if (!tenant) return error("Tenant not found", 404);
@@ -41,6 +46,7 @@ export async function GET(
       userCount: tenant._count?.users ?? 0,
       bookingCount: tenant._count?.bookings ?? 0,
       roomCount: tenant._count?.rooms ?? 0,
+      owner: tenant.users?.[0] ?? null,
       platformFeeConfig: tenant.platformFeeConfig
         ? formatPlatformFeeConfig(tenant.platformFeeConfig)
         : null,

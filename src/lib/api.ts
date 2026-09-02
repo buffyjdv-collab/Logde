@@ -264,10 +264,13 @@ export const usersRbacApi = {
 // ── Super Admin: Tenants ────────────────────────────────────────────────────
 export const tenantsApi = {
   list: () => api<Tenant[]>("/api/super/tenants"),
-  create: (data: { name: string; contactEmail: string; contactPhone?: string; address?: string; plan?: string; feeType?: string; feeValue?: number }) =>
-    api<Tenant>("/api/super/tenants", { method: "POST", body: JSON.stringify(data) }),
+  get: (id: string) => api<Tenant & { owner: { id: string; name: string; email: string; phone: string | null; active: boolean; lastLogin: string | null } | null }>(`/api/super/tenants/${id}`),
+  create: (data: { name: string; contactEmail: string; contactPhone?: string; address?: string; plan?: string; feeType?: string; feeValue?: number; ownerName?: string; ownerEmail?: string; password?: string }) =>
+    api<Tenant & { credentials: { ownerName: string; email: string; password: string; userId: string; loginUrl: string } }>("/api/super/tenants", { method: "POST", body: JSON.stringify(data) }),
   update: (id: string, data: Partial<Tenant>) =>
     api<Tenant>(`/api/super/tenants/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  resetPassword: (id: string, password?: string) =>
+    api<{ ownerName: string; email: string; password: string; message: string }>(`/api/super/tenants/${id}/reset-password`, { method: "POST", body: JSON.stringify({ password }) }),
 };
 
 // ── Super Admin: Platform Fees ───────────────────────────────────────────────
