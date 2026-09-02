@@ -422,3 +422,87 @@ Stage Summary:
 - Hospitality emerald theme preserved throughout with super-admin rose accent (rose stat cards + rose hover/active states in dialogs and confirmations).
 - The router in `src/app/page.tsx` already imported these 5 components — this task completes the wiring without modifying `page.tsx`.
 - Work record also saved to `/home/z/my-project/agent-ctx/6b-super-admin-views.md`.
+
+---
+Task ID: 2
+Agent: Frontend Builder — Tenants View Owner Credentials
+
+## Work Log
+- Read `/home/z/my-project/worklog.md` (Tasks 5, 5b, 6b, 7, 8, 9) and confirmed the API client contract in `src/lib/api.ts`:
+  - `tenantsApi.create()` now accepts optional `ownerName`, `ownerEmail`, `password` and returns `Tenant & { credentials: { ownerName, email, password, userId, loginUrl } }`.
+  - `tenantsApi.get(id)` returns `Tenant & { owner: { id, name, email, phone, active, lastLogin } | null }`.
+  - `tenantsApi.resetPassword(id, password?)` returns `{ ownerName, email, password, message }`.
+- Read the existing `src/components/views/tenants-view.tsx` end-to-end to map its structure: PageHeader → 4 StatCards → filters → table → Create/Edit Dialog → View Dialog → Suspend AlertDialog → DetailRow helper.
+- Verified all required lucide-react icons exist: `KeyRound`, `UserCircle`, `Copy`, `Check`, `Lock`, `Eye`, `EyeOff`, `RefreshCw` (added the latter two to support the password reveal toggle + Auto-generate button).
+- Rewrote `src/components/views/tenants-view.tsx` (now ~1222 lines, single `"use client"` declaration, single `TenantsView` export) — additions only, no removal of existing functionality.
+
+### 1. New types & helpers (file-local)
+- `type OwnerCredentials = { ownerName, email, password, userId, loginUrl }` — the credential box payload.
+- `type CredentialsResult = { title, tenantName, credentials: OwnerCredentials }` — drives the credentials success dialog (title varies between "Tenant created successfully!" and "Owner password reset successfully!").
+- `function generatePassword(length = 8): string` — cryptographically-strong password generator using `crypto.getRandomValues` (falls back to `Math.random` if `crypto` is unavailable). Uses an ambiguous-character-stripped alphabet (`A-Za-z2-9` minus `ILO01ilo`) so the 8-char output is human-friendly.
+
+### 2. Reusable `<CredentialsDisplay credentials={...} />` component
+- Emerald-bordered box (`border-emerald-500/30 bg-emerald-500/5`) shown both after tenant creation and after password reset — exactly the same UI, driven by the shared `CredentialsResult` state.
+- Header row: `Lock` icon + "Owner Login Credentials" label + a "Copy credentials" outline button that copies all three lines (`Login URL`, `Email`, `Password`) to the clipboard via `navigator.clipboard.writeText()` and `toast.success("Credentials copied to clipboard")`.
+- Three credential rows, each with a label + a mono `<code>` chip on emerald-tinted background:
+  - **Login URL**: `credentials.loginUrl` (from API for create; `/` for reset).
+  - **Email**: `credentials.email` + a per-field ghost copy button.
+  - **Password**: masked by default (`••••••••`) with an eye toggle (`Eye`/`EyeOff`) and a per-field ghost copy button.
+- Per-row copy state is tracked with `useState<"email" | "password" | "all" | null>`; the copy button swaps from `Copy` → `Check` (emerald) for 2 s after a successful copy.
+- Defensive: bails out with `toast.error("Clipboard not available in this browser")` if `navigator.clipboard` is missing.
+
+### 3. Create Tenant dialog — new "Owner Login Credentials" section
+- Added three fields to `TenantFormState` + `EMPTY_FORM`: `ownerName`, `ownerEmail`, `password` (all default empty string).
+- Rendered only when `!editing` (so the Edit dialog is untouched), placed below the existing rose "Initial Platform Fee Configuration" box:
+  - Emerald-accented box (`border-emerald-500/30 bg-emerald-500/5`) with a `Lock` icon + "Owner Login Credentials" header + a helper paragraph explaining that leaving fields blank uses tenant defaults and that an empty password auto-generates an 8-char one.
+  - **Owner Name** (Input) — placeholder `"Owner's full name"`.
+  - **Owner Email** (Input type=email) — placeholder `"owner@lodge.com"`.
+  - **Password** (Input with `autoComplete="new-password"`) — placeholder `"Leave blank to auto-generate"`, paired with an "Auto-generate" outline button (`RefreshCw` icon) that calls `generatePassword(8)` and fills the input.
+- `handleSubmit` forwards `ownerName`/`ownerEmail`/`password` to `createMutation.mutate()` (passed through as `undefined` when blank so the API applies its defaults). The mutation signature was extended to include the three optional fields.
+- The create dialog's description was updated to mention the owner account is created automatically.
+
+### 4. Credentials Success Dialog (reused)
+- New `<Dialog open={!!credentialsResult} …>` driven by a `credentialsResult` state in `TenantsView`.
+- Title: a `CheckCircle2` (emerald) + the dynamic `title` from `CredentialsResult` ("Tenant created successfully!" on create, "Owner password reset successfully!" on reset).
+- Body: tenant name (small "Tenant" label + bold value) → `<CredentialsDisplay>` → an amber warning note (`Lock` icon) — "Share these credentials securely with the tenant owner. The password will not be shown again."
+- Footer: a single "Done" button that clears `credentialsResult`.
+
+### 5. Tenant row dropdown — two new actions
+- Added two `DropdownMenuItem`s between "Edit" and the existing "Suspend/Activate" separator:
+  - **Owner Info** (`UserCircle` icon) → opens the new Owner Info dialog (`setOwnerInfoTarget(t)`).
+  - **Reset Owner Password** (`KeyRound` icon) → opens the new Reset Password confirm AlertDialog (`setResetTarget(t)`).
+- The existing View/Edit/Suspend/Activate items, table, filters, stats, and edit dialog are unchanged.
+
+### 6. Owner Info Dialog
+- New `<Dialog open={!!ownerInfoTarget}>` that uses a `useQuery({ queryKey: ["tenant-owner", ownerInfoTarget?.id], queryFn: () => tenantsApi.get(ownerInfoTarget!.id), enabled: !!ownerInfoTarget })` to lazily fetch the tenant + owner.
+- Header: `UserCircle` (rose) + "Owner Info" + description "Owner account details for {name}".
+- Loading state: three pulsing skeleton bars.
+- Populated state: an emerald-tinted avatar block + a `<DetailRow>` list showing Name, Email (`Mail` icon), Phone (`Phone` icon, conditional), Status (Active = emerald Badge / Inactive = rose Badge), Last Login (`formatDate()` or "Never").
+- Empty state: when `ownerData.owner` is null, an amber notice explaining no owner account is linked and pointing the user to the "Reset Owner Password" action.
+- Footer: a full-width flex with "Reset Password" outline button (closes owner-info dialog, opens the reset confirm AlertDialog for the same tenant) on the left and a "Close" button on the right.
+
+### 7. Reset Owner Password confirmation + mutation
+- New `resetPasswordMutation` (`useMutation` calling `tenantsApi.resetPassword(id)`):
+  - `onSuccess`: `toast.success("Owner password reset")`, invalidates `["tenants"]`, `["super-dashboard"]`, and `["tenant-owner", tenantId]` (so the Owner Info dialog reflects the new login time on next open), closes the confirm AlertDialog, then opens the shared Credentials Success Dialog with title "Owner password reset successfully!" and a constructed `OwnerCredentials` (loginUrl `/`, userId `""`).
+  - `onError`: `toast.error(e.message)`.
+- New AlertDialog: "Reset owner password?" with description explaining the previous password stops working and the new credentials will be shown. The `AlertDialogAction` uses `e.preventDefault()` so the confirm dialog stays open while the mutation runs — that way the "Resetting…" pending state is visible and the action button is `disabled` while `resetPasswordMutation.isPending`. The dialog actually closes once `onSuccess` fires `setResetTarget(null)`.
+
+### 8. Invalidation hygiene
+- All mutations that affect tenants or platform stats invalidate both `["tenants"]` and `["super-dashboard"]`.
+- `resetPasswordMutation` additionally invalidates `["tenant-owner", tenantId]` so re-opening the Owner Info dialog shows fresh `lastLogin` data.
+
+### Verification
+- `bun run lint 2>&1 | tail -20` → exit code 0, zero errors, zero warnings (`$ eslint .` produced no output).
+- `bunx tsc --noEmit --skipLibCheck 2>&1 | grep tenants-view` → zero matches (no type errors in the modified file).
+- File structure verified: single `"use client"` directive, single `export function TenantsView`, single `function CredentialsDisplay`, single `function DetailRow`, single `function PlanBadge`, single `function generatePassword`, single `interface TenantFormState`, single `const EMPTY_FORM`, single `type OwnerCredentials`, single `type CredentialsResult` — no duplication. 8 distinct JSX sections inside `TenantsView`: Stats row, Filters, Tenants table, Create / Edit Dialog, Credentials Success Dialog, Owner Info Dialog, View dialog, Suspend confirm, Reset confirm.
+- All required icons (`KeyRound`, `UserCircle`, `Copy`, `Check`, `Lock`) imported from `lucide-react`; `Eye`/`EyeOff`/`RefreshCw` also added for the password toggle and Auto-generate button. `toast` imported from `sonner`, `useMutation`/`useQuery`/`useQueryClient` from `@tanstack/react-query`.
+- Existing table, filters, stats, edit dialog, view dialog, suspend confirmation, and DetailRow helper are byte-for-byte preserved (modulo minor formatting normalization).
+
+Stage Summary:
+- `src/components/views/tenants-view.tsx` updated with owner credential creation flow:
+  - Create dialog gains an emerald-accented "Owner Login Credentials" section (Owner Name / Owner Email / Password with Auto-generate).
+  - On successful create, a shared Credentials Success Dialog renders the returned credentials via the new reusable `<CredentialsDisplay>` component (Login URL + Email + Password rows, per-field copy buttons, password show/hide toggle, "Copy credentials" button that copies all three, amber "share securely" warning).
+  - Tenant row dropdown gains "Owner Info" (`UserCircle`) and "Reset Owner Password" (`KeyRound`) actions.
+  - Owner Info dialog fetches `tenantsApi.get(id)` and shows the owner's name/email/phone/active-status/last-login (or an empty-state pointing to Reset Password if no owner exists).
+  - Reset Owner Password confirm AlertDialog calls `tenantsApi.resetPassword(id)` and reuses the Credentials Success Dialog to show the new password.
+- `bun run lint` passes with 0 errors. TypeScript clean for the modified file.
